@@ -1,4 +1,4 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
@@ -9,6 +9,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
 {
     public class HttpSysOptions
     {
+        private const uint MaximumRequestQueueNameLength = 260;
         private const Http503VerbosityLevel DefaultRejectionVerbosityLevel = Http503VerbosityLevel.Basic; // Http.sys default.
         private const long DefaultRequestQueueLength = 1000; // Http.sys default.
         internal static readonly int DefaultMaxAccepts = 5 * Environment.ProcessorCount;
@@ -23,9 +24,28 @@ namespace Microsoft.AspNetCore.Server.HttpSys
         private RequestQueue _requestQueue;
         private UrlGroup _urlGroup;
         private long? _maxRequestBodySize = DefaultMaxRequestBodySize;
+        private string _requestQueueName;
 
         public HttpSysOptions()
         {
+        }
+
+        /// <summary>
+        /// The name of the Http.Sys request queue
+        /// </summary>
+        public string RequestQueueName
+        {
+            get => _requestQueueName;
+            set
+            {
+                if (value.Length > MaximumRequestQueueNameLength)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(value),
+                                                          value,
+                                                          $"The request queue name should be fewer than {MaximumRequestQueueNameLength} characters in length");
+                }
+                _requestQueueName = value;
+            }
         }
 
         /// <summary>
@@ -75,7 +95,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys
             {
                 if (value.HasValue && value < -1)
                 {
-                    throw new ArgumentOutOfRangeException(nameof(value), value, "The value must be positive, or -1 for infiniate.");
+                    throw new ArgumentOutOfRangeException(nameof(value), value, "The value must be positive, or -1 for infinite.");
                 }
 
                 if (value.HasValue && _urlGroup != null)
@@ -136,9 +156,9 @@ namespace Microsoft.AspNetCore.Server.HttpSys
 
         /// <summary>
         /// Gets or sets a value that controls whether synchronous IO is allowed for the HttpContext.Request.Body and HttpContext.Response.Body.
-        /// The default is `true`.
+        /// The default is `false`.
         /// </summary>
-        public bool AllowSynchronousIO { get; set; } = true;
+        public bool AllowSynchronousIO { get; set; } = false;
 
         /// <summary>
         /// Gets or sets a value that controls how http.sys reacts when rejecting requests due to throttling conditions - like when the request
