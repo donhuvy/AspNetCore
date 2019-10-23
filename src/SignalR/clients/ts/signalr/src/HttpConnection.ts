@@ -9,7 +9,7 @@ import { ILogger, LogLevel } from "./ILogger";
 import { HttpTransportType, ITransport, TransferFormat } from "./ITransport";
 import { LongPollingTransport } from "./LongPollingTransport";
 import { ServerSentEventsTransport } from "./ServerSentEventsTransport";
-import { Arg, createLogger, Platform } from "./Utils";
+import { Arg, createLogger, getUserAgentHeader, Platform } from "./Utils";
 import { WebSocketTransport } from "./WebSocketTransport";
 
 /** @private */
@@ -302,15 +302,16 @@ export class HttpConnection implements IConnection {
     }
 
     private async getNegotiationResponse(url: string): Promise<INegotiateResponse> {
-        let headers;
+        const headers = {};
         if (this.accessTokenFactory) {
             const token = await this.accessTokenFactory();
             if (token) {
-                headers = {
-                    ["Authorization"]: `Bearer ${token}`,
-                };
+                headers[`Authorization`] = `Bearer ${token}`;
             }
         }
+
+        const [name, value] = getUserAgentHeader();
+        headers[name] = value;
 
         const negotiateUrl = this.resolveNegotiateUrl(url);
         this.logger.log(LogLevel.Debug, `Sending negotiation request: ${negotiateUrl}.`);
@@ -321,7 +322,7 @@ export class HttpConnection implements IConnection {
             });
 
             if (response.statusCode !== 200) {
-                return Promise.reject(new Error(`Unexpected status code returned from negotiate ${response.statusCode}`));
+                return Promise.reject(new Error(`Unexpected status code returned from negotiate '${response.statusCode}'`));
             }
 
             const negotiateResponse = JSON.parse(response.content as string) as INegotiateResponse;
@@ -474,8 +475,8 @@ export class HttpConnection implements IConnection {
         }
 
         if (this.connectionState === ConnectionState.Connecting) {
-            this.logger.log(LogLevel.Warning, `Call to HttpConnection.stopConnection(${error}) was ignored because the connection hasn't yet left the in the connecting state.`);
-            return;
+            this.logger.log(LogLevel.Warning, `Call to HttpConnection.stopConnection(${error}) was ignored because the connection is still in the connecting state.`);
+            throw new Error(`HttpConnection.stopConnection(${error}) was called while the connection is still in the connecting state.`);
         }
 
         if (this.connectionState === ConnectionState.Disconnecting) {
@@ -625,7 +626,7 @@ export class TransportSendQueue {
             offset += item.byteLength;
         }
 
-        return result;
+        return result.buffer;
     }
 }
 
