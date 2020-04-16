@@ -104,7 +104,7 @@ namespace Microsoft.AspNetCore.Testing
             _trace2.NotAllConnectionsClosedGracefully();
         }
 
-        public void ConnectionBadRequest(string connectionId, BadHttpRequestException ex)
+        public void ConnectionBadRequest(string connectionId, Microsoft.AspNetCore.Http.BadHttpRequestException ex)
         {
             _trace1.ConnectionBadRequest(connectionId, ex);
             _trace2.ConnectionBadRequest(connectionId, ex);
@@ -122,10 +122,10 @@ namespace Microsoft.AspNetCore.Testing
             _trace2.NotAllConnectionsAborted();
         }
 
-        public void HeartbeatSlow(TimeSpan interval, DateTimeOffset now)
+        public void HeartbeatSlow(TimeSpan heartbeatDuration, TimeSpan interval, DateTimeOffset now)
         {
-            _trace1.HeartbeatSlow(interval, now);
-            _trace2.HeartbeatSlow(interval, now);
+            _trace1.HeartbeatSlow(heartbeatDuration, interval, now);
+            _trace2.HeartbeatSlow(heartbeatDuration, interval, now);
         }
 
         public void ApplicationNeverCompleted(string connectionId)

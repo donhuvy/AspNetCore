@@ -145,8 +145,15 @@ namespace Microsoft.AspNetCore.WebUtilities
         public override int Peek() { throw null; }
         public override int Read() { throw null; }
         public override int Read(char[] buffer, int index, int count) { throw null; }
-        [System.Diagnostics.DebuggerStepThroughAttribute]
+        public override int Read(System.Span<char> buffer) { throw null; }
         public override System.Threading.Tasks.Task<int> ReadAsync(char[] buffer, int index, int count) { throw null; }
+        [System.Diagnostics.DebuggerStepThroughAttribute]
+        public override System.Threading.Tasks.ValueTask<int> ReadAsync(System.Memory<char> buffer, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
+        public override string ReadLine() { throw null; }
+        [System.Diagnostics.DebuggerStepThroughAttribute]
+        public override System.Threading.Tasks.Task<string> ReadLineAsync() { throw null; }
+        [System.Diagnostics.DebuggerStepThroughAttribute]
+        public override System.Threading.Tasks.Task<string> ReadToEndAsync() { throw null; }
     }
     public partial class HttpResponseStreamWriter : System.IO.TextWriter
     {
@@ -161,10 +168,14 @@ namespace Microsoft.AspNetCore.WebUtilities
         public override System.Threading.Tasks.Task FlushAsync() { throw null; }
         public override void Write(char value) { }
         public override void Write(char[] values, int index, int count) { }
+        public override void Write(System.ReadOnlySpan<char> value) { }
         public override void Write(string value) { }
         public override System.Threading.Tasks.Task WriteAsync(char value) { throw null; }
         public override System.Threading.Tasks.Task WriteAsync(char[] values, int index, int count) { throw null; }
+        public override System.Threading.Tasks.Task WriteAsync(System.ReadOnlyMemory<char> value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
         public override System.Threading.Tasks.Task WriteAsync(string value) { throw null; }
+        public override void WriteLine(System.ReadOnlySpan<char> value) { }
+        public override System.Threading.Tasks.Task WriteLineAsync(System.ReadOnlyMemory<char> value, System.Threading.CancellationToken cancellationToken = default(System.Threading.CancellationToken)) { throw null; }
     }
     [System.Runtime.InteropServices.StructLayoutAttribute(System.Runtime.InteropServices.LayoutKind.Sequential)]
     public partial struct KeyValueAccumulator
@@ -212,6 +223,8 @@ namespace Microsoft.AspNetCore.WebUtilities
     public static partial class QueryHelpers
     {
         public static string AddQueryString(string uri, System.Collections.Generic.IDictionary<string, string> queryString) { throw null; }
+        public static string AddQueryString(string uri, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, Microsoft.Extensions.Primitives.StringValues>> queryString) { throw null; }
+        public static string AddQueryString(string uri, System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> queryString) { throw null; }
         public static string AddQueryString(string uri, string name, string value) { throw null; }
         public static System.Collections.Generic.Dictionary<string, Microsoft.Extensions.Primitives.StringValues> ParseNullableQuery(string queryString) { throw null; }
         public static System.Collections.Generic.Dictionary<string, Microsoft.Extensions.Primitives.StringValues> ParseQuery(string queryString) { throw null; }

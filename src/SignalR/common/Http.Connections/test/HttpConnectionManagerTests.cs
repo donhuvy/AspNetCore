@@ -7,6 +7,7 @@ using System.IO.Pipelines;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http.Connections.Internal;
+using Microsoft.AspNetCore.Internal;
 using Microsoft.AspNetCore.SignalR.Tests;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -235,9 +236,6 @@ namespace Microsoft.AspNetCore.Http.Connections.Tests
                     try
                     {
                         Assert.True(result.IsCompleted);
-
-                        // We should be able to write
-                        await connection.Transport.Output.WriteAsync(new byte[] { 1 });
                     }
                     finally
                     {
@@ -248,13 +246,9 @@ namespace Microsoft.AspNetCore.Http.Connections.Tests
                 connection.TransportTask = Task.Run(async () =>
                 {
                     var result = await connection.Application.Input.ReadAsync();
-                    Assert.Equal(new byte[] { 1 }, result.Buffer.ToArray());
-                    connection.Application.Input.AdvanceTo(result.Buffer.End);
-
-                    result = await connection.Application.Input.ReadAsync();
                     try
                     {
-                        Assert.True(result.IsCompleted);
+                        Assert.True(result.IsCanceled);
                     }
                     finally
                     {
@@ -418,7 +412,7 @@ namespace Microsoft.AspNetCore.Http.Connections.Tests
         private static HttpConnectionManager CreateConnectionManager(ILoggerFactory loggerFactory, IHostApplicationLifetime lifetime = null)
         {
             lifetime = lifetime ?? new EmptyApplicationLifetime();
-            return new HttpConnectionManager(loggerFactory, lifetime);
+            return new HttpConnectionManager(loggerFactory, lifetime, Options.Create(new ConnectionOptions()));
         }
 
         [Flags]

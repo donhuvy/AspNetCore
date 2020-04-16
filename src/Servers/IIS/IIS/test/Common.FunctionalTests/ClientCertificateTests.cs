@@ -35,7 +35,7 @@ namespace Microsoft.AspNetCore.Server.IIS.FunctionalTests
 
         [ConditionalTheory]
         [MemberData(nameof(TestVariants))]
-        [OSSkipCondition(OperatingSystems.Windows, WindowsVersions.Win7, WindowsVersions.Win2008R2)]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win8)]
         public Task HttpsNoClientCert_NoClientCert(TestVariant variant)
         {
             return ClientCertTest(variant, sendClientCert: false);
@@ -43,7 +43,7 @@ namespace Microsoft.AspNetCore.Server.IIS.FunctionalTests
 
         [ConditionalTheory]
         [MemberData(nameof(TestVariants))]
-        [OSSkipCondition(OperatingSystems.Windows, WindowsVersions.Win7, WindowsVersions.Win2008R2)]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win8)]
         public Task HttpsClientCert_GetCertInformation(TestVariant variant)
         {
             return ClientCertTest(variant, sendClientCert: true);
@@ -89,7 +89,7 @@ namespace Microsoft.AspNetCore.Server.IIS.FunctionalTests
             }
             catch (Exception ex)
             {
-                Logger.LogError($"Certificate is invalid. Issuer name: {cert.Issuer}");
+                Logger.LogError($"Certificate is invalid. Issuer name: {cert?.Issuer}");
                 using (var store = new X509Store(StoreName.Root, StoreLocation.LocalMachine))
                 {
                     Logger.LogError($"List of current certificates in root store:");

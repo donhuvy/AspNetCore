@@ -34,11 +34,19 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
         private HttpRequestTarget _requestTargetForm = HttpRequestTarget.Unknown;
         private Uri _absoluteRequestTarget;
 
+        // The _parsed fields cache the Path, QueryString, RawTarget, and/or _absoluteRequestTarget
+        // from the previous request when DisableStringReuse is false.
+        private string _parsedPath = null;
+        private string _parsedQueryString = null;
+        private string _parsedRawTarget = null;
+        private Uri _parsedAbsoluteRequestTarget;
+
         private int _remainingRequestHeadersBytesAllowed;
 
         public Http1Connection(HttpConnectionContext context)
-            : base(context)
         {
+            Initialize(context);
+
             _context = context;
             _parser = ServiceContext.HttpParser;
             _keepAliveTicks = ServerOptions.Limits.KeepAliveTimeout.Ticks;
@@ -196,7 +204,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                 if (!_parser.ParseRequestLine(new Http1ParsingHandler(this), trimmedBuffer, out consumed, out examined))
                 {
                     // We read the maximum allowed but didn't complete the start line.
-                    BadHttpRequestException.Throw(RequestRejectionReason.RequestLineTooLong);
+                    KestrelBadHttpRequestException.Throw(RequestRejectionReason.RequestLineTooLong);
                 }
 
                 return true;
@@ -253,7 +261,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                     if (!result)
                     {
                         // We read the maximum allowed but didn't complete the headers.
-                        BadHttpRequestException.Throw(RequestRejectionReason.HeadersExceedMaxTotalSize);
+                        KestrelBadHttpRequestException.Throw(RequestRejectionReason.HeadersExceedMaxTotalSize);
                     }
 
                     TimeoutControl.CancelTimeout();
@@ -337,6 +345,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                 // Clear parsedData as we won't check it if we come via this path again,
                 // an setting to null is fast as it doesn't need to use a GC write barrier.
                 _parsedRawTarget = _parsedPath = _parsedQueryString = null;
+                _parsedAbsoluteRequestTarget = null;
                 return;
             }
 
@@ -389,6 +398,10 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                     Path = _parsedPath;
                     QueryString = _parsedQueryString;
                 }
+
+                // Clear parsedData for absolute target as we won't check it if we come via this path again,
+                // an setting to null is fast as it doesn't need to use a GC write barrier.
+                _parsedAbsoluteRequestTarget = null;
             }
             catch (InvalidOperationException)
             {
@@ -411,7 +424,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             // requests (https://tools.ietf.org/html/rfc7231#section-4.3.6).
             if (method != HttpMethod.Connect)
             {
-                BadHttpRequestException.Throw(RequestRejectionReason.ConnectMethodRequired);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.ConnectMethodRequired);
             }
 
             // When making a CONNECT request to establish a tunnel through one or
@@ -441,9 +454,10 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
 
             Path = string.Empty;
             QueryString = string.Empty;
-            // Clear parsedData for path and queryString as we won't check it if we come via this path again,
+            // Clear parsedData for path, queryString and absolute target as we won't check it if we come via this path again,
             // an setting to null is fast as it doesn't need to use a GC write barrier.
             _parsedPath = _parsedQueryString = null;
+            _parsedAbsoluteRequestTarget = null;
         }
 
         private void OnAsteriskFormTarget(HttpMethod method)
@@ -454,7 +468,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             // OPTIONS request (https://tools.ietf.org/html/rfc7231#section-4.3.7).
             if (method != HttpMethod.Options)
             {
-                BadHttpRequestException.Throw(RequestRejectionReason.OptionsMethodRequired);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.OptionsMethodRequired);
             }
 
             RawTarget = Asterisk;
@@ -463,6 +477,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             // Clear parsedData as we won't check it if we come via this path again,
             // an setting to null is fast as it doesn't need to use a GC write barrier.
             _parsedRawTarget = _parsedPath = _parsedQueryString = null;
+            _parsedAbsoluteRequestTarget = null;
         }
 
         private void OnAbsoluteFormTarget(Span<byte> target, Span<byte> query)
@@ -497,7 +512,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                     ThrowRequestTargetRejected(target);
                 }
 
-                _absoluteRequestTarget = uri;
+                _absoluteRequestTarget = _parsedAbsoluteRequestTarget = uri;
                 Path = _parsedPath = uri.LocalPath;
                 // don't use uri.Query because we need the unescaped version
                 previousValue = _parsedQueryString;
@@ -520,6 +535,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                 RawTarget = _parsedRawTarget;
                 Path = _parsedPath;
                 QueryString = _parsedQueryString;
+                _absoluteRequestTarget = _parsedAbsoluteRequestTarget;
             }
         }
 
@@ -539,11 +555,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                 {
                     return;
                 }
-                BadHttpRequestException.Throw(RequestRejectionReason.MissingHostHeader);
+
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.MissingHostHeader);
             }
             else if (hostCount > 1)
             {
-                BadHttpRequestException.Throw(RequestRejectionReason.MultipleHostHeaders);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.MultipleHostHeaders);
             }
             else if (_requestTargetForm != HttpRequestTarget.OriginForm)
             {
@@ -552,7 +569,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             }
             else if (!HttpUtilities.IsHostHeaderValid(hostText))
             {
-                BadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
             }
         }
 
@@ -562,7 +579,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             {
                 if (hostText != RawTarget)
                 {
-                    BadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
+                    KestrelBadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
                 }
             }
             else if (_requestTargetForm == HttpRequestTarget.AbsoluteForm)
@@ -579,14 +596,14 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                     if (!_absoluteRequestTarget.IsDefaultPort
                         || hostText != _absoluteRequestTarget.Authority + ":" + _absoluteRequestTarget.Port.ToString(CultureInfo.InvariantCulture))
                     {
-                        BadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
+                        KestrelBadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
                     }
                 }
             }
 
             if (!HttpUtilities.IsHostHeaderValid(hostText))
             {
-                BadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.InvalidHostHeader, hostText);
             }
         }
 
@@ -639,7 +656,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             {
                 if (_requestProcessingStatus == RequestProcessingStatus.ParsingHeaders)
                 {
-                    BadHttpRequestException.Throw(RequestRejectionReason.MalformedRequestInvalidHeaders);
+                    KestrelBadHttpRequestException.Throw(RequestRejectionReason.MalformedRequestInvalidHeaders);
                 }
                 throw;
             }
@@ -656,10 +673,10 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                         endConnection = true;
                         return true;
                     case RequestProcessingStatus.ParsingRequestLine:
-                        BadHttpRequestException.Throw(RequestRejectionReason.InvalidRequestLine);
+                        KestrelBadHttpRequestException.Throw(RequestRejectionReason.InvalidRequestLine);
                         break;
                     case RequestProcessingStatus.ParsingHeaders:
-                        BadHttpRequestException.Throw(RequestRejectionReason.MalformedRequestInvalidHeaders);
+                        KestrelBadHttpRequestException.Throw(RequestRejectionReason.MalformedRequestInvalidHeaders);
                         break;
                 }
             }
@@ -674,7 +691,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             {
                 // In this case, there is an ongoing request but the start line/header parsing has timed out, so send
                 // a 408 response.
-                BadHttpRequestException.Throw(RequestRejectionReason.RequestHeadersTimeout);
+                KestrelBadHttpRequestException.Throw(RequestRejectionReason.RequestHeadersTimeout);
             }
 
             endConnection = false;

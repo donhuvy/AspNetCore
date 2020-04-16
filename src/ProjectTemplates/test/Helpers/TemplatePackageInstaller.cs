@@ -8,6 +8,7 @@ using System.Linq;
 using System.Reflection;
 using System.Threading;
 using System.Threading.Tasks;
+using Microsoft.AspNetCore.Internal;
 using Microsoft.Extensions.CommandLineUtils;
 using Xunit;
 using Xunit.Abstractions;
@@ -38,13 +39,16 @@ namespace Templates.Test.Helpers
             "Microsoft.DotNet.Web.Spa.ProjectTemplates.3.0",
             "Microsoft.DotNet.Web.Spa.ProjectTemplates.3.1",
             "Microsoft.DotNet.Web.Spa.ProjectTemplates.5.0",
-            "Microsoft.DotNet.Web.Spa.ProjectTemplates"
+            "Microsoft.DotNet.Web.Spa.ProjectTemplates",
+            "Microsoft.AspNetCore.Blazor.Templates",
         };
 
-        public static string CustomHivePath { get; } = typeof(TemplatePackageInstaller)
-            .Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
-            .Single(s => s.Key == "CustomTemplateHivePath").Value;
-
+        public static string CustomHivePath { get; } = (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("helix"))) 
+                    ? typeof(TemplatePackageInstaller)
+                        .Assembly.GetCustomAttributes<AssemblyMetadataAttribute>()
+                        .Single(s => s.Key == "CustomTemplateHivePath").Value
+                    : Path.Combine("Hives", ".templateEngine");
+                                        
         public static async Task EnsureTemplatingEngineInitializedAsync(ITestOutputHelper output)
         {
             await InstallerLock.WaitAsync();
@@ -80,11 +84,19 @@ namespace Templates.Test.Helpers
 
         private static async Task InstallTemplatePackages(ITestOutputHelper output)
         {
-            var builtPackages = Directory.EnumerateFiles(
-                    typeof(TemplatePackageInstaller).Assembly
+            string packagesDir;
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("helix")))
+            {
+                packagesDir = ".";
+            }
+            else
+            {
+                packagesDir = typeof(TemplatePackageInstaller).Assembly
                     .GetCustomAttributes<AssemblyMetadataAttribute>()
-                    .Single(a => a.Key == "ArtifactsShippingPackagesDir").Value,
-                    "*.nupkg")
+                    .Single(a => a.Key == "ArtifactsShippingPackagesDir").Value;
+            }
+
+            var builtPackages = Directory.EnumerateFiles(packagesDir, "*Templates*.nupkg")
                 .Where(p => _templatePackages.Any(t => Path.GetFileName(p).StartsWith(t, StringComparison.OrdinalIgnoreCase)))
                 .ToArray();
 

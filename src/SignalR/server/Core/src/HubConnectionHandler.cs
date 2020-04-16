@@ -7,6 +7,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Connections;
+using Microsoft.AspNetCore.Internal;
 using Microsoft.AspNetCore.SignalR.Internal;
 using Microsoft.AspNetCore.SignalR.Protocol;
 using Microsoft.Extensions.DependencyInjection;
@@ -30,6 +31,9 @@ namespace Microsoft.AspNetCore.SignalR
         private readonly HubDispatcher<THub> _dispatcher;
         private readonly bool _enableDetailedErrors;
         private readonly long? _maximumMessageSize;
+
+        // Internal for testing
+        internal ISystemClock SystemClock { get; set; } = new SystemClock();
 
         /// <summary>
         /// Initializes a new instance of the <see cref="HubConnectionHandler{THub}"/> class.
@@ -98,6 +102,7 @@ namespace Microsoft.AspNetCore.SignalR
                 ClientTimeoutInterval = _hubOptions.ClientTimeoutInterval ?? _globalHubOptions.ClientTimeoutInterval ?? HubOptionsSetup.DefaultClientTimeoutInterval,
                 StreamBufferCapacity = _hubOptions.StreamBufferCapacity ?? _globalHubOptions.StreamBufferCapacity ?? HubOptionsSetup.DefaultStreamBufferCapacity,
                 MaximumReceiveMessageSize = _maximumMessageSize,
+                SystemClock = SystemClock,
             };
 
             Log.ConnectedStarting(_logger);
@@ -213,6 +218,8 @@ namespace Microsoft.AspNetCore.SignalR
         {
             var input = connection.Input;
             var protocol = connection.Protocol;
+            connection.BeginClientTimeout();
+
 
             var binder = new HubConnectionBinder<THub>(_dispatcher, connection);
 
@@ -230,14 +237,20 @@ namespace Microsoft.AspNetCore.SignalR
 
                     if (!buffer.IsEmpty)
                     {
-                        connection.ResetClientTimeout();
-
+                        bool messageReceived = false;
                         // No message limit, just parse and dispatch
                         if (_maximumMessageSize == null)
                         {
                             while (protocol.TryParseMessage(ref buffer, binder, out var message))
                             {
+                                messageReceived = true;
+                                connection.StopClientTimeout();
                                 await _dispatcher.DispatchMessageAsync(connection, message);
+                            }
+
+                            if (messageReceived)
+                            {
+                                connection.BeginClientTimeout();
                             }
                         }
                         else
@@ -258,6 +271,9 @@ namespace Microsoft.AspNetCore.SignalR
 
                                 if (protocol.TryParseMessage(ref segment, binder, out var message))
                                 {
+                                    messageReceived = true;
+                                    connection.StopClientTimeout();
+
                                     await _dispatcher.DispatchMessageAsync(connection, message);
                                 }
                                 else if (overLength)
@@ -272,6 +288,11 @@ namespace Microsoft.AspNetCore.SignalR
 
                                 // Update the buffer to the remaining segment
                                 buffer = buffer.Slice(segment.Start);
+                            }
+
+                            if (messageReceived)
+                            {
+                                connection.BeginClientTimeout();
                             }
                         }
                     }

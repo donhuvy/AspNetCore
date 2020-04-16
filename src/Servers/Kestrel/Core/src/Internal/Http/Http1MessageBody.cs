@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Diagnostics;
 using System.IO.Pipelines;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,30 +11,29 @@ using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
 {
+    using BadHttpRequestException = Microsoft.AspNetCore.Http.BadHttpRequestException;
+
     internal abstract class Http1MessageBody : MessageBody
     {
         protected readonly Http1Connection _context;
         protected bool _completed;
 
-        protected Http1MessageBody(Http1Connection context)
-            : base(context)
+        protected Http1MessageBody(Http1Connection context) : base(context)
         {
             _context = context;
         }
 
-        protected void CheckCompletedReadResult(ReadResult result)
+        [StackTraceHidden]
+        protected void ThrowUnexpectedEndOfRequestContent()
         {
-            if (result.IsCompleted)
-            {
-                // OnInputOrOutputCompleted() is an idempotent method that closes the connection. Sometimes
-                // input completion is observed here before the Input.OnWriterCompleted() callback is fired,
-                // so we call OnInputOrOutputCompleted() now to prevent a race in our tests where a 400
-                // response is written after observing the unexpected end of request content instead of just
-                // closing the connection without a response as expected.
-                _context.OnInputOrOutputCompleted();
+            // OnInputOrOutputCompleted() is an idempotent method that closes the connection. Sometimes
+            // input completion is observed here before the Input.OnWriterCompleted() callback is fired,
+            // so we call OnInputOrOutputCompleted() now to prevent a race in our tests where a 400
+            // response is written after observing the unexpected end of request content instead of just
+            // closing the connection without a response as expected.
+            _context.OnInputOrOutputCompleted();
 
-                BadHttpRequestException.Throw(RequestRejectionReason.UnexpectedEndOfRequestContent);
-            }
+            KestrelBadHttpRequestException.Throw(RequestRejectionReason.UnexpectedEndOfRequestContent);
         }
 
         public abstract bool TryReadInternal(out ReadResult readResult);
@@ -89,7 +89,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                     AdvanceTo(result.Buffer.End);
                 } while (!result.IsCompleted);
             }
-            catch (BadHttpRequestException ex)
+            catch (Microsoft.AspNetCore.Http.BadHttpRequestException ex)
             {
                 _context.SetBadRequestState(ex);
             }
@@ -132,7 +132,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             {
                 if (headers.HeaderTransferEncoding.Count > 0 || (headers.ContentLength.HasValue && headers.ContentLength.Value != 0))
                 {
-                    BadHttpRequestException.Throw(RequestRejectionReason.UpgradeRequestCannotHavePayload);
+                    KestrelBadHttpRequestException.Throw(RequestRejectionReason.UpgradeRequestCannotHavePayload);
                 }
 
                 context.OnTrailersComplete(); // No trailers for these.
@@ -152,7 +152,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
                 // status code and then close the connection.
                 if (transferCoding != TransferCoding.Chunked)
                 {
-                    BadHttpRequestException.Throw(RequestRejectionReason.FinalTransferCodingNotChunked, transferEncoding);
+                    KestrelBadHttpRequestException.Throw(RequestRejectionReason.FinalTransferCodingNotChunked, transferEncoding);
                 }
 
                 // TODO may push more into the wrapper rather than just calling into the message body
@@ -177,7 +177,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
             if (context.Method == HttpMethod.Post || context.Method == HttpMethod.Put)
             {
                 var requestRejectionReason = httpVersion == HttpVersion.Http11 ? RequestRejectionReason.LengthRequired : RequestRejectionReason.LengthRequiredHttp10;
-                BadHttpRequestException.Throw(requestRejectionReason, context.Method);
+                KestrelBadHttpRequestException.Throw(requestRejectionReason, context.Method);
             }
 
             context.OnTrailersComplete(); // No trailers for these.
