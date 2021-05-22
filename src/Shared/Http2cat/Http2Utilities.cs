@@ -18,6 +18,7 @@ using Microsoft.AspNetCore.Connections;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2;
 using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure;
+using Microsoft.AspNetCore.Testing;
 using Microsoft.Extensions.Logging;
 using Microsoft.Net.Http.Headers;
 using IHttpHeadersHandler = System.Net.Http.IHttpHeadersHandler;
@@ -143,64 +144,7 @@ namespace Microsoft.AspNetCore.Http2Cat
 
         void IHttpHeadersHandler.OnHeader(ReadOnlySpan<byte> name, ReadOnlySpan<byte> value)
         {
-            _decodedHeaders[GetAsciiStringNonNullCharacters(name)] = GetAsciiOrUTF8StringNonNullCharacters(value);
-        }
-
-        public unsafe string GetAsciiStringNonNullCharacters(ReadOnlySpan<byte> span)
-        {
-            if (span.IsEmpty)
-            {
-                return string.Empty;
-            }
-
-            var asciiString = new string('\0', span.Length);
-
-            fixed (char* output = asciiString)
-            fixed (byte* buffer = span)
-            {
-                // This version if AsciiUtilities returns null if there are any null (0 byte) characters
-                // in the string
-                if (!StringUtilities.TryGetAsciiString(buffer, output, span.Length))
-                {
-                    throw new InvalidOperationException();
-                }
-            }
-            return asciiString;
-        }
-
-        public unsafe string GetAsciiOrUTF8StringNonNullCharacters(ReadOnlySpan<byte> span)
-        {
-            if (span.IsEmpty)
-            {
-                return string.Empty;
-            }
-
-            var resultString = new string('\0', span.Length);
-
-            fixed (char* output = resultString)
-            fixed (byte* buffer = span)
-            {
-                // This version if AsciiUtilities returns null if there are any null (0 byte) characters
-                // in the string
-                if (!StringUtilities.TryGetAsciiString(buffer, output, span.Length))
-                {
-                    // null characters are considered invalid
-                    if (span.IndexOf((byte)0) != -1)
-                    {
-                        throw new InvalidOperationException();
-                    }
-
-                    try
-                    {
-                        resultString = HeaderValueEncoding.GetString(buffer, span.Length);
-                    }
-                    catch (DecoderFallbackException)
-                    {
-                        throw new InvalidOperationException();
-                    }
-                }
-            }
-            return resultString;
+            _decodedHeaders[name.GetAsciiStringNonNullCharacters()] = value.GetAsciiOrUTF8StringNonNullCharacters(HeaderValueEncoding);
         }
 
         void IHttpHeadersHandler.OnHeadersComplete(bool endStream) { }
@@ -229,7 +173,6 @@ namespace Microsoft.AspNetCore.Http2Cat
         public Task StartStreamAsync(int streamId, IEnumerable<KeyValuePair<string, string>> headers, bool endStream)
         {
             var writableBuffer = _pair.Application.Output;
-            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var frame = new Http2Frame();
             frame.PrepareHeaders(Http2HeadersFrameFlags.NONE, streamId);
@@ -328,7 +271,6 @@ namespace Microsoft.AspNetCore.Http2Cat
         public Task SendHeadersWithPaddingAsync(int streamId, IEnumerable<KeyValuePair<string, string>> headers, byte padLength, bool endStream)
         {
             var writableBuffer = _pair.Application.Output;
-            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var frame = new Http2Frame();
 
@@ -369,7 +311,6 @@ namespace Microsoft.AspNetCore.Http2Cat
         public Task SendHeadersWithPriorityAsync(int streamId, IEnumerable<KeyValuePair<string, string>> headers, byte priority, int streamDependency, bool endStream)
         {
             var writableBuffer = _pair.Application.Output;
-            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var frame = new Http2Frame();
             frame.PrepareHeaders(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.PRIORITY, streamId);
@@ -413,7 +354,6 @@ namespace Microsoft.AspNetCore.Http2Cat
         public Task SendHeadersWithPaddingAndPriorityAsync(int streamId, IEnumerable<KeyValuePair<string, string>> headers, byte padLength, byte priority, int streamDependency, bool endStream)
         {
             var writableBuffer = _pair.Application.Output;
-            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var frame = new Http2Frame();
             frame.PrepareHeaders(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.PADDED | Http2HeadersFrameFlags.PRIORITY, streamId);
@@ -1026,12 +966,13 @@ namespace Microsoft.AspNetCore.Http2Cat
 
         public void OnStaticIndexedHeader(int index)
         {
-            throw new NotImplementedException();
+            ref readonly var entry = ref H2StaticTable.Get(index - 1);
+            ((IHttpHeadersHandler)this).OnHeader(entry.Name, entry.Value);
         }
 
         public void OnStaticIndexedHeader(int index, ReadOnlySpan<byte> value)
         {
-            throw new NotImplementedException();
+            ((IHttpHeadersHandler)this).OnHeader(H2StaticTable.Get(index - 1).Name, value);
         }
 
         internal class Http2FrameWithPayload : Http2Frame

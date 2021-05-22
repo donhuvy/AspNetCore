@@ -4,11 +4,12 @@
 using System;
 using System.Collections.Concurrent;
 using System.Diagnostics;
-using System.Linq;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.JSInterop.Infrastructure;
+using static Microsoft.AspNetCore.Internal.LinkerFlags;
 
 namespace Microsoft.JSInterop
 {
@@ -17,7 +18,7 @@ namespace Microsoft.JSInterop
     /// </summary>
     public abstract partial class JSRuntime : IJSRuntime
     {
-        private long _nextObjectReferenceId = 0; // 0 signals no object, but we increment prior to assignment. The first tracked object should have id 1
+        private long _nextObjectReferenceId; // Initial value of 0 signals no object, but we increment prior to assignment. The first tracked object should have id 1
         private long _nextPendingTaskId = 1; // Start at 1 because zero signals "no response needed"
         private readonly ConcurrentDictionary<long, object> _pendingTasks = new ConcurrentDictionary<long, object>();
         private readonly ConcurrentDictionary<long, IDotNetObjectReference> _trackedRefsById = new ConcurrentDictionary<long, IDotNetObjectReference>();
@@ -37,6 +38,7 @@ namespace Microsoft.JSInterop
                 Converters =
                 {
                     new DotNetObjectReferenceJsonConverterFactory(this),
+                    new JSObjectReferenceJsonConverter(this),
                 }
             };
         }
@@ -62,15 +64,8 @@ namespace Microsoft.JSInterop
         /// <param name="identifier">An identifier for the function to invoke. For example, the value <c>"someScope.someFunction"</c> will invoke the function <c>window.someScope.someFunction</c>.</param>
         /// <param name="args">JSON-serializable arguments.</param>
         /// <returns>An instance of <typeparamref name="TValue"/> obtained by JSON-deserializing the return value.</returns>
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, object[] args)
-        {
-            if (DefaultAsyncTimeout.HasValue)
-            {
-                return InvokeWithDefaultCancellation<TValue>(identifier, args);
-            }
-
-            return InvokeAsync<TValue>(identifier, CancellationToken.None, args);
-        }
+        public ValueTask<TValue> InvokeAsync<[DynamicallyAccessedMembers(JsonSerialized)] TValue>(string identifier, object?[]? args)
+            => InvokeAsync<TValue>(0, identifier, args);
 
         /// <summary>
         /// Invokes the specified JavaScript function asynchronously.
@@ -79,15 +74,34 @@ namespace Microsoft.JSInterop
         /// <param name="identifier">An identifier for the function to invoke. For example, the value <c>"someScope.someFunction"</c> will invoke the function <c>window.someScope.someFunction</c>.</param>
         /// <param name="cancellationToken">
         /// A cancellation token to signal the cancellation of the operation. Specifying this parameter will override any default cancellations such as due to timeouts
-        /// (<see cref="JSRuntime.DefaultAsyncTimeout"/>) from being applied.
+        /// (<see cref="DefaultAsyncTimeout"/>) from being applied.
         /// </param>
         /// <param name="args">JSON-serializable arguments.</param>
         /// <returns>An instance of <typeparamref name="TValue"/> obtained by JSON-deserializing the return value.</returns>
-        public ValueTask<TValue> InvokeAsync<TValue>(string identifier, CancellationToken cancellationToken, object[] args)
+        public ValueTask<TValue> InvokeAsync<[DynamicallyAccessedMembers(JsonSerialized)] TValue>(string identifier, CancellationToken cancellationToken, object?[]? args)
+            => InvokeAsync<TValue>(0, identifier, cancellationToken, args);
+
+        internal async ValueTask<TValue> InvokeAsync<[DynamicallyAccessedMembers(JsonSerialized)] TValue>(long targetInstanceId, string identifier, object?[]? args)
+        {
+            if (DefaultAsyncTimeout.HasValue)
+            {
+                using var cts = new CancellationTokenSource(DefaultAsyncTimeout.Value);
+                // We need to await here due to the using
+                return await InvokeAsync<TValue>(targetInstanceId, identifier, cts.Token, args);
+            }
+
+            return await InvokeAsync<TValue>(targetInstanceId, identifier, CancellationToken.None, args);
+        }
+
+        internal ValueTask<TValue> InvokeAsync<[DynamicallyAccessedMembers(JsonSerialized)] TValue>(
+            long targetInstanceId,
+            string identifier,
+            CancellationToken cancellationToken,
+            object?[]? args)
         {
             var taskId = Interlocked.Increment(ref _nextPendingTaskId);
-            var tcs = new TaskCompletionSource<TValue>(TaskContinuationOptions.RunContinuationsAsynchronously);
-            if (cancellationToken != default)
+            var tcs = new TaskCompletionSource<TValue>();
+            if (cancellationToken.CanBeCanceled)
             {
                 _cancellationRegistrations[taskId] = cancellationToken.Register(() =>
                 {
@@ -107,10 +121,12 @@ namespace Microsoft.JSInterop
                     return new ValueTask<TValue>(tcs.Task);
                 }
 
-                var argsJson = args?.Any() == true ?
+                var argsJson = args is not null && args.Length != 0 ?
                     JsonSerializer.Serialize(args, JsonSerializerOptions) :
                     null;
-                BeginInvokeJS(taskId, identifier, argsJson);
+                var resultType = JSCallResultTypeHelper.FromGeneric<TValue>();
+
+                BeginInvokeJS(taskId, identifier, argsJson, resultType, targetInstanceId);
 
                 return new ValueTask<TValue>(tcs.Task);
             }
@@ -130,14 +146,14 @@ namespace Microsoft.JSInterop
             }
         }
 
-        private async ValueTask<T> InvokeWithDefaultCancellation<T>(string identifier, object[] args)
-        {
-            using (var cts = new CancellationTokenSource(DefaultAsyncTimeout.Value))
-            {
-                // We need to await here due to the using
-                return await InvokeAsync<T>(identifier, cts.Token, args);
-            }
-        }
+        /// <summary>
+        /// Begins an asynchronous function invocation.
+        /// </summary>
+        /// <param name="taskId">The identifier for the function invocation, or zero if no async callback is required.</param>
+        /// <param name="identifier">The identifier for the function to invoke.</param>
+        /// <param name="argsJson">A JSON representation of the arguments.</param>
+        protected virtual void BeginInvokeJS(long taskId, string identifier, string? argsJson)
+            => BeginInvokeJS(taskId, identifier, argsJson, JSCallResultType.Default, 0);
 
         /// <summary>
         /// Begins an asynchronous function invocation.
@@ -145,7 +161,9 @@ namespace Microsoft.JSInterop
         /// <param name="taskId">The identifier for the function invocation, or zero if no async callback is required.</param>
         /// <param name="identifier">The identifier for the function to invoke.</param>
         /// <param name="argsJson">A JSON representation of the arguments.</param>
-        protected abstract void BeginInvokeJS(long taskId, string identifier, string argsJson);
+        /// <param name="resultType">The type of result expected from the invocation.</param>
+        /// <param name="targetInstanceId">The instance ID of the target JS object.</param>
+        protected abstract void BeginInvokeJS(long taskId, string identifier, string? argsJson, JSCallResultType resultType, long targetInstanceId);
 
         /// <summary>
         /// Completes an async JS interop call from JavaScript to .NET
@@ -156,6 +174,7 @@ namespace Microsoft.JSInterop
             DotNetInvocationInfo invocationInfo,
             in DotNetInvocationResult invocationResult);
 
+        [UnconditionalSuppressMessage("ReflectionAnalysis", "IL2072:RequiresUnreferencedCode", Justification = "We enforce trimmer attributes for JSON deserialized types on InvokeAsync.")]
         internal void EndInvokeJS(long taskId, bool succeeded, ref Utf8JsonReader jsonReader)
         {
             if (!_pendingTasks.TryRemove(taskId, out var tcs))

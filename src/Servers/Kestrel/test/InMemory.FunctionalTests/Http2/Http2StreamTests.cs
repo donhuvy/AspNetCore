@@ -64,22 +64,28 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
         }
 
-        [Fact]
-        public async Task HEADERS_Received_CustomMethod_Accepted()
+        [Theory]
+        [InlineData("GET")]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        public async Task HEADERS_Received_KnownOrCustomMethods_Accepted(string method)
         {
             var headers = new[]
             {
-                new KeyValuePair<string, string>(HeaderNames.Method, "Custom"),
+                new KeyValuePair<string, string>(HeaderNames.Method, method),
                 new KeyValuePair<string, string>(HeaderNames.Path, "/"),
                 new KeyValuePair<string, string>(HeaderNames.Scheme, "http"),
                 new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
             };
-            await InitializeConnectionAsync(_echoMethod);
+            await InitializeConnectionAsync(_echoMethodNoBody);
 
             await StartStreamAsync(1, headers, endStream: true);
 
             var headersFrame = await ExpectAsync(Http2FrameType.HEADERS,
-                withLength: 51,
+                withLength: 45 + method.Length,
                 withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
                 withStreamId: 1);
 
@@ -90,14 +96,146 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
             Assert.Equal(4, _decodedHeaders.Count);
             Assert.Contains("date", _decodedHeaders.Keys, StringComparer.OrdinalIgnoreCase);
             Assert.Equal("200", _decodedHeaders[HeaderNames.Status]);
-            Assert.Equal("Custom", _decodedHeaders["Method"]);
-            Assert.Equal("0", _decodedHeaders["content-length"]);
+            Assert.Equal("0", _decodedHeaders[HeaderNames.ContentLength]);
+            Assert.Equal(method, _decodedHeaders["Method"]);
+        }
+
+        [Fact]
+        public async Task HEADERS_Received_HEADMethod_Accepted()
+        {
+            await InitializeConnectionAsync(_echoMethodNoBody);
+
+            var headers = new[]
+            {
+                new KeyValuePair<string, string>(HeaderNames.Method, "HEAD"),
+                new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                new KeyValuePair<string, string>(HeaderNames.Scheme, "http"),
+                new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+            };
+            await SendHeadersAsync(1, Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM, headers);
+
+            var headersFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 45,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
+                withStreamId: 1);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
+
+            _hpackDecoder.Decode(headersFrame.PayloadSequence, endHeaders: false, handler: this);
+
+            Assert.Equal(3, _decodedHeaders.Count);
+            Assert.Contains("date", _decodedHeaders.Keys, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("200", _decodedHeaders[HeaderNames.Status]);
+            Assert.Equal("HEAD", _decodedHeaders["Method"]);
+        }
+
+        [Theory]
+        [InlineData("GET")]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        public async Task HEADERS_Received_MethodsWithContentLength_Accepted(string method)
+        {
+            var headers = new[]
+            {
+                new KeyValuePair<string, string>(HeaderNames.Method, method),
+                new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                new KeyValuePair<string, string>(HeaderNames.Scheme, "http"),
+                new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+                new KeyValuePair<string, string>(HeaderNames.ContentLength, "11"),
+            };
+            await InitializeConnectionAsync(context =>
+            {
+                Assert.True(HttpMethods.Equals(method, context.Request.Method));
+                Assert.True(context.Request.CanHaveBody());
+                Assert.Equal(11, context.Request.ContentLength);
+                Assert.False(context.Request.Headers.ContainsKey(HeaderNames.TransferEncoding));
+                return context.Request.BodyReader.CopyToAsync(context.Response.BodyWriter);
+            });
+
+            await StartStreamAsync(1, headers, endStream: false);
+            await SendDataAsync(1, Encoding.UTF8.GetBytes("Hello World"), endStream: true);
+
+            var headersFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 32,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS),
+                withStreamId: 1);
+            var dataFrame = await ExpectAsync(Http2FrameType.DATA,
+                withLength: 11,
+                withFlags: (byte)(Http2HeadersFrameFlags.NONE),
+                withStreamId: 1);
+            await ExpectAsync(Http2FrameType.DATA,
+                withLength: 0,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_STREAM),
+                withStreamId: 1);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
+
+            _hpackDecoder.Decode(headersFrame.PayloadSequence, endHeaders: false, handler: this);
+
+            Assert.Equal(2, _decodedHeaders.Count);
+            Assert.Contains("date", _decodedHeaders.Keys, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("200", _decodedHeaders[HeaderNames.Status]);
+            Assert.Equal("Hello World", Encoding.UTF8.GetString(dataFrame.Payload.Span));
+        }
+
+        [Theory]
+        [InlineData("GET")]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        public async Task HEADERS_Received_MethodsWithoutContentLength_Accepted(string method)
+        {
+            var headers = new[]
+            {
+                new KeyValuePair<string, string>(HeaderNames.Method, method),
+                new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                new KeyValuePair<string, string>(HeaderNames.Scheme, "http"),
+                new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+            };
+            await InitializeConnectionAsync(context =>
+            {
+                Assert.True(HttpMethods.Equals(method, context.Request.Method));
+                Assert.True(context.Request.CanHaveBody());
+                Assert.Null(context.Request.ContentLength);
+                Assert.False(context.Request.Headers.ContainsKey(HeaderNames.TransferEncoding));
+                return context.Request.BodyReader.CopyToAsync(context.Response.BodyWriter);
+            });
+
+            await StartStreamAsync(1, headers, endStream: false);
+            await SendDataAsync(1, Encoding.UTF8.GetBytes("Hello World"), endStream: true);
+
+            var headersFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 32,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS),
+                withStreamId: 1);
+            var dataFrame = await ExpectAsync(Http2FrameType.DATA,
+                withLength: 11,
+                withFlags: (byte)(Http2HeadersFrameFlags.NONE),
+                withStreamId: 1);
+            await ExpectAsync(Http2FrameType.DATA,
+                withLength: 0,
+                withFlags: (byte)(Http2HeadersFrameFlags.END_STREAM),
+                withStreamId: 1);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
+
+            _hpackDecoder.Decode(headersFrame.PayloadSequence, endHeaders: false, handler: this);
+
+            Assert.Equal(2, _decodedHeaders.Count);
+            Assert.Contains("date", _decodedHeaders.Keys, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("200", _decodedHeaders[HeaderNames.Status]);
+            Assert.Equal("Hello World", Encoding.UTF8.GetString(dataFrame.Payload.Span));
         }
 
         [Fact]
         public async Task HEADERS_Received_CONNECTMethod_Accepted()
         {
-            await InitializeConnectionAsync(_echoMethod);
+            await InitializeConnectionAsync(_echoMethodNoBody);
 
             // :path and :scheme are not allowed, :authority is optional
             var headers = new[] { new KeyValuePair<string, string>(HeaderNames.Method, "CONNECT") };
@@ -715,7 +853,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
         [Fact]
         public async Task ContentLength_Received_MultipleDataFrame_ReadViaPipeAndStream_Verified()
         {
-            var tcs = new TaskCompletionSource<object>();
+            var tcs = new TaskCompletionSource();
             var headers = new[]
             {
                 new KeyValuePair<string, string>(HeaderNames.Method, "POST"),
@@ -729,7 +867,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 Assert.Equal(1, readResult.Buffer.Length);
                 context.Request.BodyReader.AdvanceTo(readResult.Buffer.End);
 
-                tcs.SetResult(null);
+                tcs.SetResult();
 
                 var buffer = new byte[100];
 
@@ -1023,7 +1161,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)Http2DataFrameFlags.NONE,
                 withStreamId: 1);
 
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => m.Exception?.Message.Contains("Response Content-Length mismatch: too many bytes written (12 of 11).") ?? false);
+            Assert.Contains(LogMessages, m => m.Exception?.Message.Contains("Response Content-Length mismatch: too many bytes written (12 of 11).") ?? false);
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -1096,7 +1234,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
                 withStreamId: 1);
 
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => m.Exception?.Message.Contains("Response Content-Length mismatch: too few bytes written (0 of 11).") ?? false);
+            Assert.Contains(LogMessages, m => m.Exception?.Message.Contains(CoreStrings.FormatTooFewBytesWritten(0, 11)) ?? false);
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -1256,7 +1394,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
         [Fact]
         public async Task StartAsync_WithoutFinalFlushDoesNotFlushUntilResponseEnd()
         {
-            var tcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var headers = new[]
             {
@@ -1285,7 +1423,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)Http2DataFrameFlags.NONE,
                 withStreamId: 1);
 
-            tcs.SetResult(null);
+            tcs.SetResult();
 
             await ExpectAsync(Http2FrameType.DATA,
                 withLength: 0,
@@ -1516,7 +1654,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)Http2DataFrameFlags.NONE,
                 withStreamId: 1);
 
-            await WaitForStreamErrorAsync(1, Http2ErrorCode.INTERNAL_ERROR, "Response Content-Length mismatch: too few bytes written (6 of 11).");
+            await WaitForStreamErrorAsync(1, Http2ErrorCode.INTERNAL_ERROR, CoreStrings.FormatTooFewBytesWritten(6, 11));
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -1601,7 +1739,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
 
             await WaitForStreamErrorAsync(expectedStreamId: 1, Http2ErrorCode.NO_ERROR, null);
             // Logged without an exception.
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => m.Message.Contains("the application completed without reading the entire request body."));
+            Assert.Contains(LogMessages, m => m.Message.Contains("the application completed without reading the entire request body."));
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -1688,7 +1826,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
 
             await WaitForStreamErrorAsync(1, Http2ErrorCode.NO_ERROR, null);
             // Logged without an exception.
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => m.Message.Contains("the application completed without reading the entire request body."));
+            Assert.Contains(LogMessages, m => m.Message.Contains("the application completed without reading the entire request body."));
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -1751,7 +1889,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
 
             await WaitForStreamErrorAsync(1, Http2ErrorCode.NO_ERROR, null);
             // Logged without an exception.
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => m.Message.Contains("the application completed without reading the entire request body."));
+            Assert.Contains(LogMessages, m => m.Message.Contains("the application completed without reading the entire request body."));
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -2105,7 +2243,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
             _pair.Application.Output.Complete();
             await _connectionTask;
 
-            var message = Assert.Single(TestApplicationErrorLogger.Messages, m => m.Exception is HPackEncodingException);
+            var message = Assert.Single(LogMessages, m => m.Exception is HPackEncodingException);
             Assert.Contains(SR.net_http_hpack_encode_failure, message.Exception.Message);
         }
 
@@ -2251,7 +2389,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 withFlags: (byte)(Http2HeadersFrameFlags.END_HEADERS | Http2HeadersFrameFlags.END_STREAM),
                 withStreamId: 1);
 
-            Assert.Contains(TestApplicationErrorLogger.Messages, m => (m.Exception?.Message.Contains("App Faulted") ?? false) && m.LogLevel == LogLevel.Error);
+            Assert.Contains(LogMessages, m => (m.Exception?.Message.Contains("App Faulted") ?? false) && m.LogLevel == LogLevel.Error);
 
             await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
 
@@ -2335,7 +2473,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
 
                 await context.Response.Body.WriteAsync(new byte[10], 0, 10);
 
-                _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                _runningStreams[streamIdFeature.StreamId].TrySetResult();
             });
 
             await StartStreamAsync(1, _browserRequestHeaders, endStream: true);
@@ -2370,7 +2508,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 context.Response.BodyWriter.Advance(10);
                 await context.Response.BodyWriter.FlushAsync();
 
-                _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                _runningStreams[streamIdFeature.StreamId].TrySetResult();
             });
 
             await StartStreamAsync(1, _browserRequestHeaders, endStream: true);
@@ -2406,7 +2544,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                         _abortedStreamIds.Add(streamIdFeature.StreamId);
                     }
 
-                    _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                    _runningStreams[streamIdFeature.StreamId].TrySetResult();
                 }
                 catch (Exception ex)
                 {
@@ -2449,7 +2587,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                         _abortedStreamIds.Add(streamIdFeature.StreamId);
                     }
 
-                    _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                    _runningStreams[streamIdFeature.StreamId].TrySetResult();
                 }
                 catch (Exception ex)
                 {
@@ -2483,7 +2621,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                             _abortedStreamIds.Add(streamIdFeature.StreamId);
                         }
 
-                        _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                        _runningStreams[streamIdFeature.StreamId].TrySetResult();
                     });
 
                     context.Abort();
@@ -2523,7 +2661,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                             _abortedStreamIds.Add(streamIdFeature.StreamId);
                         }
 
-                        _runningStreams[streamIdFeature.StreamId].TrySetResult(null);
+                        _runningStreams[streamIdFeature.StreamId].TrySetResult();
                     });
 
                     await context.Response.Body.WriteAsync(new byte[10], 0, 10);
@@ -3926,7 +4064,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
         [Fact]
         public async Task CompleteAsync_AdvanceAfterComplete_AdvanceThrows()
         {
-            var tcs = new TaskCompletionSource<object>();
+            var tcs = new TaskCompletionSource();
             var headers = new[]
             {
                 new KeyValuePair<string, string>(HeaderNames.Method, "GET"),
@@ -3943,7 +4081,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 }
                 catch (InvalidOperationException)
                 {
-                    tcs.SetResult(null);
+                    tcs.SetResult();
                     return;
                 }
 
@@ -4609,7 +4747,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
         [Fact]
         public async Task HEADERS_Received_Latin1_AcceptedWhenLatin1OptionIsConfigured()
         {
-            _serviceContext.ServerOptions.Latin1RequestHeaders = true;
+            _serviceContext.ServerOptions.RequestHeaderEncodingSelector = _ => Encoding.Latin1;
 
             await InitializeConnectionAsync(context =>
             {
@@ -4646,6 +4784,49 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Tests
                 expectedLastStreamId: 1,
                 expectedErrorCode: Http2ErrorCode.PROTOCOL_ERROR,
                 expectedErrorMessage: CoreStrings.BadRequest_MalformedRequestInvalidHeaders);
+        }
+
+        [Fact]
+        public async Task RemoveConnectionSpecificHeaders()
+        {
+            await InitializeConnectionAsync(async context =>
+            {
+                var response = context.Response;
+
+                response.Headers.Add(HeaderNames.TransferEncoding, "chunked");
+                response.Headers.Add(HeaderNames.Upgrade, "websocket");
+                response.Headers.Add(HeaderNames.Connection, "Keep-Alive");
+                response.Headers.Add(HeaderNames.KeepAlive, "timeout=5, max=1000");
+                response.Headers.Add(HeaderNames.ProxyConnection, "keep-alive");
+                await response.WriteAsync("hello, world");
+            });
+
+            await StartStreamAsync(1, _browserRequestHeaders, endStream: true);
+
+            var headersFrame = await ExpectAsync(Http2FrameType.HEADERS,
+                withLength: 32,
+                withFlags: (byte)Http2HeadersFrameFlags.END_HEADERS,
+                withStreamId: 1);
+            var dataFrame1 = await ExpectAsync(Http2FrameType.DATA,
+                withLength: 12,
+                withFlags: (byte)Http2DataFrameFlags.NONE,
+                withStreamId: 1);
+            await ExpectAsync(Http2FrameType.DATA,
+                withLength: 0,
+                withFlags: (byte)Http2DataFrameFlags.END_STREAM,
+                withStreamId: 1);
+
+            await StopConnectionAsync(expectedLastStreamId: 1, ignoreNonGoAwayFrames: false);
+
+            _hpackDecoder.Decode(headersFrame.PayloadSequence, endHeaders: false, handler: this);
+
+            Assert.Equal(2, _decodedHeaders.Count);
+            Assert.Contains("date", _decodedHeaders.Keys, StringComparer.OrdinalIgnoreCase);
+            Assert.Equal("200", _decodedHeaders[HeaderNames.Status]);
+
+            Assert.True(_helloWorldBytes.AsSpan().SequenceEqual(dataFrame1.PayloadSequence.ToArray()));
+
+            Assert.Contains(LogMessages, m => m.Message.Equals("One or more of the following response headers have been removed because they are invalid for HTTP/2 and HTTP/3 responses: 'Connection', 'Transfer-Encoding', 'Keep-Alive', 'Upgrade' and 'Proxy-Connection'."));
         }
     }
 }

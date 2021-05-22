@@ -34,20 +34,30 @@ namespace Microsoft.AspNetCore.WebUtilities
         private static ReadOnlySpan<byte> UTF8AndEncoded => new byte[] { (byte)'&' };
 
         // Used for other encodings
-        private byte[] _otherEqualEncoding;
-        private byte[] _otherAndEncoding;
+        private byte[]? _otherEqualEncoding;
+        private byte[]? _otherAndEncoding;
 
         private readonly PipeReader _pipeReader;
         private readonly Encoding _encoding;
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="FormPipeReader"/>.
+        /// </summary>
+        /// <param name="pipeReader">The <see cref="PipeReader"/> to read from.</param>
         public FormPipeReader(PipeReader pipeReader)
             : this(pipeReader, Encoding.UTF8)
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="FormPipeReader"/>.
+        /// </summary>
+        /// <param name="pipeReader">The <see cref="PipeReader"/> to read from.</param>
+        /// <param name="encoding">The <see cref="Encoding"/>.</param>
         public FormPipeReader(PipeReader pipeReader, Encoding encoding)
         {
-            if (encoding == Encoding.UTF7)
+            // https://docs.microsoft.com/en-us/dotnet/core/compatibility/syslib-warnings/syslib0001
+            if (encoding is Encoding { CodePage: 65000 })
             {
                 throw new ArgumentException("UTF7 is unsupported and insecure. Please select a different encoding.");
             }
@@ -99,7 +109,7 @@ namespace Microsoft.AspNetCore.WebUtilities
                     }
                     catch
                     {
-                        _pipeReader.AdvanceTo(buffer.Start);
+                        _pipeReader.AdvanceTo(buffer.Start, buffer.End);
                         throw;
                     }
                 }
@@ -269,7 +279,7 @@ namespace Microsoft.AspNetCore.WebUtilities
                 var keyValueReader = new SequenceReader<byte>(keyValuePair);
                 ReadOnlySequence<byte> value;
 
-                if (keyValueReader.TryReadTo(out var key, equalsDelimiter))
+                if (keyValueReader.TryReadTo(out ReadOnlySequence<byte> key, equalsDelimiter))
                 {
                     if (key.Length > KeyLengthLimit)
                     {
@@ -322,6 +332,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             throw new InvalidDataException($"Form value length limit {ValueLengthLimit} exceeded.");
         }
 
+        [SkipLocalsInit]
         private string GetDecodedStringFromReadOnlySequence(in ReadOnlySequence<byte> ros)
         {
             if (ros.IsSingleSegment)
@@ -331,7 +342,7 @@ namespace Microsoft.AspNetCore.WebUtilities
 
             if (ros.Length < StackAllocThreshold)
             {
-                Span<byte> buffer = stackalloc byte[(int)ros.Length];
+                Span<byte> buffer = stackalloc byte[StackAllocThreshold].Slice(0, (int)ros.Length);
                 ros.CopyTo(buffer);
                 return GetDecodedString(buffer);
             }

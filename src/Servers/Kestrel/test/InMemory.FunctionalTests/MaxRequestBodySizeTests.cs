@@ -10,7 +10,6 @@ using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Server.Kestrel.Core;
 using Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests.TestTransport;
 using Microsoft.AspNetCore.Testing;
-using Microsoft.Extensions.Logging.Testing;
 using Xunit;
 using BadHttpRequestException = Microsoft.AspNetCore.Server.Kestrel.Core.BadHttpRequestException;
 
@@ -29,6 +28,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
             await using (var server = new TestServer(async context =>
             {
+                Assert.True(context.Request.CanHaveBody());
                 var buffer = new byte[1];
 #pragma warning disable CS0618 // Type or member is obsolete
                 requestRejectedEx = await Assert.ThrowsAsync<BadHttpRequestException>(
@@ -57,7 +57,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
             }
 
             Assert.NotNull(requestRejectedEx);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(globalMaxRequestBodySize), requestRejectedEx.Message);
         }
 
         [Fact]
@@ -107,7 +107,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
             }
 
             Assert.NotNull(requestRejectedEx);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(perRequestMaxRequestBodySize), requestRejectedEx.Message);
         }
 
         [Fact]
@@ -305,8 +305,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
             Assert.NotNull(requestRejectedEx1);
             Assert.NotNull(requestRejectedEx2);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx1.Message);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx2.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(0), requestRejectedEx1.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(0), requestRejectedEx2.Message);
         }
 
         [Fact]
@@ -355,7 +355,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
             }
 
             Assert.NotNull(requestRejectedEx);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(globalMaxRequestBodySize), requestRejectedEx.Message);
         }
 
         [Fact]
@@ -472,7 +472,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
             }
 
             Assert.NotNull(requestRejectedEx);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(globalMaxRequestBodySize), requestRejectedEx.Message);
         }
 
         [Fact]
@@ -516,8 +516,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
             Assert.NotNull(requestRejectedEx1);
             Assert.NotNull(requestRejectedEx2);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx1.Message);
-            Assert.Equal(CoreStrings.BadRequest_RequestBodyTooLarge, requestRejectedEx2.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(0), requestRejectedEx1.Message);
+            Assert.Equal(CoreStrings.FormatBadRequest_RequestBodyTooLarge(0), requestRejectedEx2.Message);
         }
     }
 }

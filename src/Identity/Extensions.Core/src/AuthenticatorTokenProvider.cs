@@ -13,14 +13,15 @@ namespace Microsoft.AspNetCore.Identity
     public class AuthenticatorTokenProvider<TUser> : IUserTwoFactorTokenProvider<TUser> where TUser : class
     {
         /// <summary>
-        /// Checks if a two factor authentication token can be generated for the specified <paramref name="user"/>.
+        /// Checks if a two-factor authentication token can be generated for the specified <paramref name="user"/>.
         /// </summary>
         /// <param name="manager">The <see cref="UserManager{TUser}"/> to retrieve the <paramref name="user"/> from.</param>
-        /// <param name="user">The <typeparamref name="TUser"/> to check for the possibility of generating a two factor authentication token.</param>
+        /// <param name="user">The <typeparamref name="TUser"/> to check for the possibility of generating a two-factor authentication token.</param>
         /// <returns>True if the user has an authenticator key set, otherwise false.</returns>
         public async virtual Task<bool> CanGenerateTwoFactorTokenAsync(UserManager<TUser> manager, TUser user)
         {
             var key = await manager.GetAuthenticatorKeyAsync(user);
+
             return !string.IsNullOrWhiteSpace(key);
         }
 
@@ -53,7 +54,7 @@ namespace Microsoft.AspNetCore.Identity
                 return false;
             }
 
-            var hash = new HMACSHA1(Base32.FromBase32(key));
+            using var hash = new HMACSHA1(Base32.FromBase32(key));
             var unixTimestamp = Convert.ToInt64(Math.Round((DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0)).TotalSeconds));
             var timestep = Convert.ToInt64(unixTimestamp / 30);
             // Allow codes from 90s in each direction (we could make this configurable?)
@@ -65,6 +66,7 @@ namespace Microsoft.AspNetCore.Identity
                     return true;
                 }
             }
+
             return false;
         }
    }

@@ -32,7 +32,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
         private bool _completed;
         private bool _disposed;
         private bool _suffixSent;
-        private IMemoryOwner<byte> _fakeMemoryOwner;
+        private IMemoryOwner<byte>? _fakeMemoryOwner;
 
         public Http3OutputProducer(
              Http3FrameWriter frameWriter,
@@ -51,7 +51,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             _pipeReader = pipe.Reader;
 
             _flusher = new TimingPipeFlusher(_pipeWriter, timeoutControl: null, log);
-            _dataWriteProcessingTask = ProcessDataWrites();
+            _dataWriteProcessingTask = ProcessDataWrites().Preserve();
         }
 
         public void Dispose()
@@ -78,6 +78,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
         void IHttpOutputAborter.Abort(ConnectionAbortedException abortReason)
         {
             _stream.Abort(abortReason, Http3ErrorCode.InternalError);
+        }
+
+        void IHttpOutputAborter.OnInputOrOutputCompleted()
+        {
+            _stream.Abort(new ConnectionAbortedException($"{nameof(Http3OutputProducer)}.{nameof(ProcessDataWrites)} has completed."), Http3ErrorCode.InternalError);
         }
 
         public void Advance(int bytes)
@@ -110,7 +115,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
         }
 
-        public ValueTask<FlushResult> FirstWriteAsync(int statusCode, string reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
+        public ValueTask<FlushResult> FirstWriteAsync(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
         {
             lock (_dataWriterLock)
             {
@@ -120,7 +125,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
         }
 
-        public ValueTask<FlushResult> FirstWriteChunkedAsync(int statusCode, string reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
+        public ValueTask<FlushResult> FirstWriteChunkedAsync(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
@@ -228,7 +233,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
                 _completed = true;
 
                 _pipeWriter.Complete(new OperationCanceledException());
-
             }
         }
 
@@ -292,7 +296,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
             }
         }
 
-        public void WriteResponseHeaders(int statusCode, string reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, bool appCompleted)
+        public void WriteResponseHeaders(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, bool appCompleted)
         {
             lock (_dataWriterLock)
             {
@@ -360,7 +364,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
                         // Headers have already been written and there is no other content to write
                         // TODO complete something here.
                         flushResult = await _frameWriter.FlushAsync(outputAborter: null, cancellationToken: default);
-                        _frameWriter.Complete();
+                        await _frameWriter.CompleteAsync();
                     }
                     else
                     {
@@ -379,7 +383,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http3
                 _log.LogCritical(ex, nameof(Http3OutputProducer) + "." + nameof(ProcessDataWrites) + " observed an unexpected exception.");
             }
 
-            _pipeReader.Complete();
+            await _pipeReader.CompleteAsync();
 
             return flushResult;
 

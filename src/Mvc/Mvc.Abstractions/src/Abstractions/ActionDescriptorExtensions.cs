@@ -17,21 +17,20 @@ namespace Microsoft.AspNetCore.Mvc.Abstractions
         /// <typeparam name="T">The type of the property.</typeparam>
         /// <param name="actionDescriptor">The action descriptor.</param>
         /// <returns>The property or the default value of <typeparamref name="T"/>.</returns>
-        public static T GetProperty<T>(this ActionDescriptor actionDescriptor)
+        public static T? GetProperty<T>(this ActionDescriptor actionDescriptor)
         {
             if (actionDescriptor == null)
             {
                 throw new ArgumentNullException(nameof(actionDescriptor));
             }
 
-            object value;
-            if (actionDescriptor.Properties.TryGetValue(typeof(T), out value))
+            if (actionDescriptor.Properties.TryGetValue(typeof(T), out var value))
             {
-                return (T)value;
+                return (T?)value;
             }
             else
             {
-                return default(T);
+                return default!;
             }
         }
 

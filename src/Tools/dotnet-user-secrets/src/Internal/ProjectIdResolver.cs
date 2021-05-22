@@ -43,25 +43,24 @@ namespace Microsoft.Extensions.SecretManager.Tools.Internal
             var outputFile = Path.Combine(Path.GetTempPath(), Path.GetRandomFileName());
             try
             {
-                var args = new[]
-                {
-                    "msbuild",
-                    projectFile,
-                    "/nologo",
-                    "/t:_ExtractUserSecretsMetadata", // defined in SecretManager.targets
-                    "/p:_UserSecretsMetadataFile=" + outputFile,
-                    "/p:Configuration=" + configuration,
-                    "/p:CustomAfterMicrosoftCommonTargets=" + _targetsFile,
-                    "/p:CustomAfterMicrosoftCommonCrossTargetingTargets=" + _targetsFile,
-                    "-verbosity:detailed",
-                };
                 var psi = new ProcessStartInfo
                 {
                     FileName = DotNetMuxer.MuxerPathOrDefault(),
-                    Arguments = ArgumentEscaper.EscapeAndConcatenate(args),
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
+                    ArgumentList =
+                    {
+                        "msbuild",
+                        projectFile,
+                        "/nologo",
+                        "/t:_ExtractUserSecretsMetadata", // defined in SecretManager.targets
+                        "/p:_UserSecretsMetadataFile=" + outputFile,
+                        "/p:Configuration=" + configuration,
+                        "/p:CustomAfterMicrosoftCommonTargets=" + _targetsFile,
+                        "/p:CustomAfterMicrosoftCommonCrossTargetingTargets=" + _targetsFile,
+                        "-verbosity:detailed",
+                    }
                 };
 
 #if DEBUG
@@ -98,6 +97,7 @@ namespace Microsoft.Extensions.SecretManager.Tools.Internal
                 {
                     _reporter.Verbose(outputBuilder.ToString());
                     _reporter.Verbose(errorBuilder.ToString());
+                    _reporter.Error($"Exit code: {process.ExitCode}");
                     throw new InvalidOperationException(Resources.FormatError_ProjectFailedToLoad(projectFile));
                 }
 

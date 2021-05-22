@@ -96,7 +96,7 @@ namespace Microsoft.AspNetCore.Http
         /// Gets or sets the Content-Type header.
         /// </summary>
         /// <returns>The Content-Type header.</returns>
-        public abstract string ContentType { get; set; }
+        public abstract string? ContentType { get; set; }
 
         /// <summary>
         /// Gets or sets the request body <see cref="Stream"/>.
@@ -131,6 +131,6 @@ namespace Microsoft.AspNetCore.Http
         /// Gets the collection of route values for this request.
         /// </summary>
         /// <returns>The collection of route values for this request.</returns>
-        public virtual RouteValueDictionary RouteValues { get; set; }
+        public virtual RouteValueDictionary RouteValues { get; set; } = null!;
     }
 }

@@ -4,6 +4,7 @@
 using System;
 using System.Buffers;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Text;
 using System.Threading;
@@ -11,11 +12,12 @@ using System.Threading.Tasks;
 
 namespace Microsoft.AspNetCore.WebUtilities
 {
+    /// <summary>
+    /// A <see cref="TextReader"/> to read the HTTP request stream.
+    /// </summary>
     public class HttpRequestStreamReader : TextReader
     {
         private const int DefaultBufferSize = 1024;
-        private const int MinBufferSize = 128;
-        private const int MaxSharedBuilderCapacity = 360; // also the max capacity used in StringBuilderCache
 
         private Stream _stream;
         private readonly Encoding _encoding;
@@ -35,16 +37,35 @@ namespace Microsoft.AspNetCore.WebUtilities
         private bool _isBlocked;
         private bool _disposed;
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="HttpRequestStreamReader"/>.
+        /// </summary>
+        /// <param name="stream">The HTTP request <see cref="Stream"/>.</param>
+        /// <param name="encoding">The character encoding to use.</param>
         public HttpRequestStreamReader(Stream stream, Encoding encoding)
             : this(stream, encoding, DefaultBufferSize, ArrayPool<byte>.Shared, ArrayPool<char>.Shared)
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="HttpRequestStreamReader"/>.
+        /// </summary>
+        /// <param name="stream">The HTTP request <see cref="Stream"/>.</param>
+        /// <param name="encoding">The character encoding to use.</param>
+        /// <param name="bufferSize">The minimum buffer size.</param>
         public HttpRequestStreamReader(Stream stream, Encoding encoding, int bufferSize)
             : this(stream, encoding, bufferSize, ArrayPool<byte>.Shared, ArrayPool<char>.Shared)
         {
         }
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="HttpRequestStreamReader"/>.
+        /// </summary>
+        /// <param name="stream">The HTTP request <see cref="Stream"/>.</param>
+        /// <param name="encoding">The character encoding to use.</param>
+        /// <param name="bufferSize">The minimum buffer size.</param>
+        /// <param name="bytePool">The byte array pool to use.</param>
+        /// <param name="charPool">The char array pool to use.</param>
         public HttpRequestStreamReader(
             Stream stream,
             Encoding encoding,
@@ -89,6 +110,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             }
         }
 
+        /// <inheritdoc />
         protected override void Dispose(bool disposing)
         {
             if (disposing && !_disposed)
@@ -102,6 +124,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             base.Dispose(disposing);
         }
 
+        /// <inheritdoc />
         public override int Peek()
         {
             if (_disposed)
@@ -120,6 +143,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             return _charBuffer[_charBufferIndex];
         }
 
+        /// <inheritdoc />
         public override int Read()
         {
             if (_disposed)
@@ -138,6 +162,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             return _charBuffer[_charBufferIndex++];
         }
 
+        /// <inheritdoc />
         public override int Read(char[] buffer, int index, int count)
         {
             if (buffer == null)
@@ -159,6 +184,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             return Read(span);
         }
 
+        /// <inheritdoc />
         public override int Read(Span<char> buffer)
         {
             if (buffer == null)
@@ -212,6 +238,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             return charsRead;
         }
 
+        /// <inheritdoc />
         public override Task<int> ReadAsync(char[] buffer, int index, int count)
         {
             if (buffer == null)
@@ -233,6 +260,8 @@ namespace Microsoft.AspNetCore.WebUtilities
             return ReadAsync(memory).AsTask();
         }
 
+        /// <inheritdoc />
+        [SuppressMessage("ApiDesign", "RS0027:Public API with optional parameter(s) should have the most parameters amongst its public overloads.", Justification = "Required to maintain compatibility")]
         public override async ValueTask<int> ReadAsync(Memory<char> buffer, CancellationToken cancellationToken = default)
         {
             if (_disposed)
@@ -328,14 +357,15 @@ namespace Microsoft.AspNetCore.WebUtilities
             return charsRead;
         }
 
-        public override async Task<string> ReadLineAsync()
+        /// <inheritdoc />
+        public override async Task<string?> ReadLineAsync()
         {
             if (_disposed)
             {
                 throw new ObjectDisposedException(nameof(HttpRequestStreamReader));
             }
 
-            StringBuilder sb = null;
+            StringBuilder? sb = null;
             var consumeLineFeed = false;
 
             while (true)
@@ -365,14 +395,15 @@ namespace Microsoft.AspNetCore.WebUtilities
         // immediately followed by a line feed. The resulting string does not
         // contain the terminating carriage return and/or line feed. The returned
         // value is null if the end of the input stream has been reached.
-        public override string ReadLine()
+        /// <inheritdoc />
+        public override string? ReadLine()
         {
             if (_disposed)
             {
                 throw new ObjectDisposedException(nameof(HttpRequestStreamReader));
             }
 
-            StringBuilder sb = null;
+            StringBuilder? sb = null;
             var consumeLineFeed = false;
 
             while (true)
@@ -395,7 +426,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             }
         }
 
-        private ReadLineStepResult ReadLineStep(ref StringBuilder sb, ref bool consumeLineFeed)
+        private ReadLineStepResult ReadLineStep(ref StringBuilder? sb, ref bool consumeLineFeed)
         {
             const char carriageReturn = '\r';
             const char lineFeed = '\n';
@@ -528,6 +559,7 @@ namespace Microsoft.AspNetCore.WebUtilities
             return _charsRead;
         }
 
+        /// <inheritdoc />
         public async override Task<string> ReadToEndAsync()
         {
             StringBuilder sb = new StringBuilder(_charsRead - _charBufferIndex);
@@ -549,14 +581,14 @@ namespace Microsoft.AspNetCore.WebUtilities
 
             public static ReadLineStepResult FromResult(string value) => new ReadLineStepResult(true, value);
 
-            private ReadLineStepResult(bool completed, string result)
+            private ReadLineStepResult(bool completed, string? result)
             {
                 Completed = completed;
                 Result = result;
             }
 
             public bool Completed { get; }
-            public string Result { get; }
+            public string? Result { get; }
         }
     }
 }

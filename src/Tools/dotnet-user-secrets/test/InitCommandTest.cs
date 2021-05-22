@@ -58,7 +58,6 @@ namespace Microsoft.Extensions.SecretManager.Tools.Tests
         }
 
         [Fact]
-        [QuarantinedTest]
         public void AddsEscapedSpecificSecretIdToProject()
         {
             const string SecretId = @"<lots of XML invalid values>&";
@@ -73,7 +72,6 @@ namespace Microsoft.Extensions.SecretManager.Tools.Tests
         }
 
         [Fact]
-        [QuarantinedTest]
         public void DoesNotGenerateIdForProjectWithSecretId()
         {
             const string SecretId = "AlreadyExists";

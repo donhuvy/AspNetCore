@@ -1,6 +1,7 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved. 
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+#nullable disable
 using System;
 using System.IO;
 using System.Reflection;
@@ -76,7 +77,7 @@ namespace Microsoft.Extensions.Localization.Tests
                 rootNamespaceAttribute: null,
                 loggerFactory: loggerFactory);
             var type = typeof(ResourceManagerStringLocalizerFactoryTest);
-            var assemblyName = new AssemblyName(type.GetTypeInfo().Assembly.FullName);
+            var assemblyName = new AssemblyName(type.Assembly.FullName);
 
             // Act
             typeFactory.Create(type);
@@ -84,7 +85,7 @@ namespace Microsoft.Extensions.Localization.Tests
 
             // Assert
             Assert.Equal(typeFactory.BaseName, stringFactory.BaseName);
-            Assert.Equal(typeFactory.Assembly.FullName, stringFactory.Assembly.FullName);
+            Assert.Equal(typeFactory.Assembly!.FullName, stringFactory.Assembly!.FullName);
         }
 
         [Fact]
@@ -211,7 +212,7 @@ namespace Microsoft.Extensions.Localization.Tests
             options.Setup(o => o.Value).Returns(locOptions);
             var loggerFactory = NullLoggerFactory.Instance;
             var factory = new ResourceManagerStringLocalizerFactory(localizationOptions: options.Object, loggerFactory: loggerFactory);
-            var location = typeof(ResourceManagerStringLocalizer).GetTypeInfo().Assembly.FullName;
+            var location = typeof(ResourceManagerStringLocalizer).Assembly.FullName;
 
             // Act
             var result1 = factory.Create("baseName", location);
@@ -230,7 +231,7 @@ namespace Microsoft.Extensions.Localization.Tests
             options.Setup(o => o.Value).Returns(locOptions);
             var loggerFactory = NullLoggerFactory.Instance;
             var factory = new ResourceManagerStringLocalizerFactory(localizationOptions: options.Object, loggerFactory: loggerFactory);
-            var location = typeof(ResourceManagerStringLocalizer).GetTypeInfo().Assembly.FullName;
+            var location = typeof(ResourceManagerStringLocalizer).Assembly.FullName;
 
             // Act
             var result1 = factory.Create("baseName1", location);
@@ -249,8 +250,8 @@ namespace Microsoft.Extensions.Localization.Tests
             options.Setup(o => o.Value).Returns(locOptions);
             var loggerFactory = NullLoggerFactory.Instance;
             var factory = new ResourceManagerStringLocalizerFactory(localizationOptions: options.Object, loggerFactory: loggerFactory);
-            var location1 = new AssemblyName(typeof(ResourceManagerStringLocalizer).GetTypeInfo().Assembly.FullName).Name;
-            var location2 = new AssemblyName(typeof(ResourceManagerStringLocalizerFactoryTest).GetTypeInfo().Assembly.FullName).Name;
+            var location1 = new AssemblyName(typeof(ResourceManagerStringLocalizer).Assembly.FullName).Name;
+            var location2 = new AssemblyName(typeof(ResourceManagerStringLocalizerFactoryTest).Assembly.FullName).Name;
 
             // Act
             var result1 = factory.Create("baseName", location1);
@@ -293,7 +294,7 @@ namespace Microsoft.Extensions.Localization.Tests
             var factory = new ResourceManagerStringLocalizerFactory(localizationOptions: options.Object, loggerFactory: loggerFactory);
 
             // Act & Assert
-            Assert.Throws<ArgumentNullException>(() => factory.Create("baseName", location: null));
+            Assert.Throws<ArgumentNullException>(() => factory.Create("baseName", location: null!));
         }
     }
 }

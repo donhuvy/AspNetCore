@@ -1,6 +1,8 @@
 // Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
+#nullable disable warnings
+#nullable enable annotations
 using System;
 using System.Linq;
 using System.Linq.Expressions;
@@ -45,39 +47,34 @@ namespace Microsoft.Extensions.Internal
 
             ConstructorMatcher bestMatcher = default;
 
-            if (!instanceType.GetTypeInfo().IsAbstract)
+            if (!instanceType.IsAbstract)
             {
-                foreach (var constructor in instanceType
-                    .GetTypeInfo()
-                    .DeclaredConstructors)
+                foreach (var constructor in instanceType.GetConstructors())
                 {
-                    if (!constructor.IsStatic && constructor.IsPublic)
+                    var matcher = new ConstructorMatcher(constructor);
+                    var isPreferred = constructor.IsDefined(typeof(ActivatorUtilitiesConstructorAttribute), false);
+                    var length = matcher.Match(parameters);
+
+                    if (isPreferred)
                     {
-                        var matcher = new ConstructorMatcher(constructor);
-                        var isPreferred = constructor.IsDefined(typeof(ActivatorUtilitiesConstructorAttribute), false);
-                        var length = matcher.Match(parameters);
-
-                        if (isPreferred)
+                        if (seenPreferred)
                         {
-                            if (seenPreferred)
-                            {
-                                ThrowMultipleCtorsMarkedWithAttributeException();
-                            }
-
-                            if (length == -1)
-                            {
-                                ThrowMarkedCtorDoesNotTakeAllProvidedArguments();
-                            }
+                            ThrowMultipleCtorsMarkedWithAttributeException();
                         }
 
-                        if (isPreferred || bestLength < length)
+                        if (length == -1)
                         {
-                            bestLength = length;
-                            bestMatcher = matcher;
+                            ThrowMarkedCtorDoesNotTakeAllProvidedArguments();
                         }
-
-                        seenPreferred |= isPreferred;
                     }
+
+                    if (isPreferred || bestLength < length)
+                    {
+                        bestLength = length;
+                        bestMatcher = matcher;
+                    }
+
+                    seenPreferred |= isPreferred;
                 }
             }
 
@@ -158,7 +155,7 @@ namespace Microsoft.Extensions.Internal
             return mc.Method;
         }
 
-        private static object GetService(IServiceProvider sp, Type type, Type requiredBy, bool isDefaultParameterRequired)
+        private static object? GetService(IServiceProvider sp, Type type, Type requiredBy, bool isDefaultParameterRequired)
         {
             var service = sp.GetService(type);
             if (service == null && !isDefaultParameterRequired)
@@ -217,11 +214,11 @@ namespace Microsoft.Extensions.Internal
             out ConstructorInfo matchingConstructor,
             out int?[] parameterMap)
         {
-            matchingConstructor = null;
-            parameterMap = null;
+            matchingConstructor = null!;
+            parameterMap = null!;
 
-            if (!TryFindPreferredConstructor(instanceType, argumentTypes, ref matchingConstructor, ref parameterMap) &&
-                !TryFindMatchingConstructor(instanceType, argumentTypes, ref matchingConstructor, ref parameterMap))
+            if (!TryFindPreferredConstructor(instanceType, argumentTypes, ref matchingConstructor!, ref parameterMap!) &&
+                !TryFindMatchingConstructor(instanceType, argumentTypes, ref matchingConstructor!, ref parameterMap!))
             {
                 var message = $"A suitable constructor for type '{instanceType}' could not be located. Ensure the type is concrete and services are registered for all parameters of a public constructor.";
                 throw new InvalidOperationException(message);
@@ -235,13 +232,8 @@ namespace Microsoft.Extensions.Internal
             ref ConstructorInfo matchingConstructor,
             ref int?[] parameterMap)
         {
-            foreach (var constructor in instanceType.GetTypeInfo().DeclaredConstructors)
+            foreach (var constructor in instanceType.GetConstructors())
             {
-                if (constructor.IsStatic || !constructor.IsPublic)
-                {
-                    continue;
-                }
-
                 if (TryCreateParameterMap(constructor.GetParameters(), argumentTypes, out int?[] tempParameterMap))
                 {
                     if (matchingConstructor != null)
@@ -265,13 +257,8 @@ namespace Microsoft.Extensions.Internal
             ref int?[] parameterMap)
         {
             var seenPreferred = false;
-            foreach (var constructor in instanceType.GetTypeInfo().DeclaredConstructors)
+            foreach (var constructor in instanceType.GetConstructors())
             {
-                if (constructor.IsStatic || !constructor.IsPublic)
-                {
-                    continue;
-                }
-
                 if (constructor.IsDefined(typeof(ActivatorUtilitiesConstructorAttribute), false))
                 {
                     if (seenPreferred)
@@ -302,7 +289,7 @@ namespace Microsoft.Extensions.Internal
             for (var i = 0; i < argumentTypes.Length; i++)
             {
                 var foundMatch = false;
-                var givenParameter = argumentTypes[i].GetTypeInfo();
+                var givenParameter = argumentTypes[i];
 
                 for (var j = 0; j < constructorParameters.Length; j++)
                 {
@@ -312,7 +299,7 @@ namespace Microsoft.Extensions.Internal
                         continue;
                     }
 
-                    if (constructorParameters[j].ParameterType.GetTypeInfo().IsAssignableFrom(givenParameter))
+                    if (constructorParameters[j].ParameterType.IsAssignableFrom(givenParameter))
                     {
                         foundMatch = true;
                         parameterMap[j] = i;
@@ -348,13 +335,13 @@ namespace Microsoft.Extensions.Internal
                 var applyExactLength = 0;
                 for (var givenIndex = 0; givenIndex != givenParameters.Length; givenIndex++)
                 {
-                    var givenType = givenParameters[givenIndex]?.GetType().GetTypeInfo();
+                    var givenType = givenParameters[givenIndex]?.GetType();
                     var givenMatched = false;
 
                     for (var applyIndex = applyIndexStart; givenMatched == false && applyIndex != _parameters.Length; ++applyIndex)
                     {
                         if (_parameterValues[applyIndex] == null &&
-                            _parameters[applyIndex].ParameterType.GetTypeInfo().IsAssignableFrom(givenType))
+                            _parameters[applyIndex].ParameterType.IsAssignableFrom(givenType))
                         {
                             givenMatched = true;
                             _parameterValues[applyIndex] = givenParameters[givenIndex];

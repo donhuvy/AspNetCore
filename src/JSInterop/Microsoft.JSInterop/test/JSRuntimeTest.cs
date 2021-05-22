@@ -3,6 +3,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -145,6 +146,7 @@ namespace Microsoft.JSInterop
                 ref reader);
             Assert.True(task.IsCompleted);
             var poco = task.Result;
+            Debug.Assert(poco != null);
             Assert.Equal(10, poco.Id);
             Assert.Equal("Test", poco.Name);
         }
@@ -167,6 +169,7 @@ namespace Microsoft.JSInterop
                 ref reader);
             Assert.True(task.IsCompleted);
             var poco = task.Result;
+            Debug.Assert(poco != null);
             Assert.Equal(10, poco.Id);
             Assert.Equal("Test", poco.Name);
         }
@@ -294,19 +297,9 @@ namespace Microsoft.JSInterop
         public void CanSanitizeDotNetInteropExceptions()
         {
             // Arrange
-            var expectedMessage = "An error ocurred while invoking '[Assembly]::Method'. Swapping to 'Development' environment will " +
-                "display more detailed information about the error that occurred.";
-
-            string GetMessage(DotNetInvocationInfo info) => $"An error ocurred while invoking '[{info.AssemblyName}]::{info.MethodIdentifier}'. Swapping to 'Development' environment will " +
-                "display more detailed information about the error that occurred.";
-
-            var runtime = new TestJSRuntime()
-            {
-                OnDotNetException = (invocationInfo) => new JSError { Message = GetMessage(invocationInfo) }
-            };
-
+            var runtime = new TestJSRuntime();
             var exception = new Exception("Some really sensitive data in here");
-            var invocation = new DotNetInvocationInfo("Assembly", "Method", 0, "0");
+            var invocation = new DotNetInvocationInfo("TestAssembly", "TestMethod", 0, "0");
             var result = new DotNetInvocationResult(exception, default);
 
             // Act
@@ -316,20 +309,29 @@ namespace Microsoft.JSInterop
             var call = runtime.EndInvokeDotNetCalls.Single();
             Assert.Equal("0", call.CallId);
             Assert.False(call.Success);
-            var jsError = Assert.IsType<JSError>(call.ResultOrError);
-            Assert.Equal(expectedMessage, jsError.Message);
+
+            var error = Assert.IsType<JSError>(call.ResultError);
+            Assert.Same(exception, error.InnerException);
+            Assert.Equal(invocation, error.InvocationInfo);
         }
 
         private class JSError
         {
-            public string Message { get; set; }
+            public DotNetInvocationInfo InvocationInfo { get; set; }
+            public Exception? InnerException { get; set; }
+
+            public JSError(DotNetInvocationInfo invocationInfo, Exception? innerException)
+            {
+                InvocationInfo = invocationInfo;
+                InnerException = innerException;
+            }
         }
 
         private class TestPoco
         {
             public int Id { get; set; }
 
-            public string Name { get; set; }
+            public string? Name { get; set; }
         }
 
         class TestJSRuntime : JSRuntime
@@ -348,36 +350,30 @@ namespace Microsoft.JSInterop
             public class BeginInvokeAsyncArgs
             {
                 public long AsyncHandle { get; set; }
-                public string Identifier { get; set; }
-                public string ArgsJson { get; set; }
+                public string? Identifier { get; set; }
+                public string? ArgsJson { get; set; }
             }
 
             public class EndInvokeDotNetArgs
             {
-                public string CallId { get; set; }
+                public string? CallId { get; set; }
                 public bool Success { get; set; }
-                public object ResultOrError { get; set; }
+                public string? ResultJson { get; set; }
+                public JSError? ResultError { get; set; }
             }
-
-            public Func<DotNetInvocationInfo, object> OnDotNetException { get; set; }
 
             protected internal override void EndInvokeDotNet(DotNetInvocationInfo invocationInfo, in DotNetInvocationResult invocationResult)
             {
-                var resultOrError = invocationResult.Success ? invocationResult.Result : invocationResult.Exception;
-                if (OnDotNetException != null && !invocationResult.Success)
-                {
-                    resultOrError = OnDotNetException(invocationInfo);
-                }
-
                 EndInvokeDotNetCalls.Add(new EndInvokeDotNetArgs
                 {
                     CallId = invocationInfo.CallId,
                     Success = invocationResult.Success,
-                    ResultOrError = resultOrError,
+                    ResultJson = invocationResult.ResultJson,
+                    ResultError = invocationResult.Success ? null : new JSError(invocationInfo, invocationResult.Exception),
                 });
             }
 
-            protected override void BeginInvokeJS(long asyncHandle, string identifier, string argsJson)
+            protected override void BeginInvokeJS(long asyncHandle, string identifier, string? argsJson, JSCallResultType resultType, long targetInstanceId)
             {
                 BeginInvokeCalls.Add(new BeginInvokeAsyncArgs
                 {

@@ -4,6 +4,7 @@
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Security.Claims;
 using System.Threading;
@@ -18,13 +19,17 @@ namespace Microsoft.AspNetCore.Http
     /// </summary>
     public sealed class DefaultHttpContext : HttpContext
     {
+        // The initial size of the feature collection when using the default constructor; based on number of common features
+        // https://github.com/dotnet/aspnetcore/issues/31249
+        private const int DefaultFeatureCollectionSize = 10;
+
         // Lambdas hoisted to static readonly fields to improve inlining https://github.com/dotnet/roslyn/issues/13624
         private readonly static Func<IFeatureCollection, IItemsFeature> _newItemsFeature = f => new ItemsFeature();
         private readonly static Func<DefaultHttpContext, IServiceProvidersFeature> _newServiceProvidersFeature = context => new RequestServicesFeature(context, context.ServiceScopeFactory);
         private readonly static Func<IFeatureCollection, IHttpAuthenticationFeature> _newHttpAuthenticationFeature = f => new HttpAuthenticationFeature();
         private readonly static Func<IFeatureCollection, IHttpRequestLifetimeFeature> _newHttpRequestLifetimeFeature = f => new HttpRequestLifetimeFeature();
         private readonly static Func<IFeatureCollection, ISessionFeature> _newSessionFeature = f => new DefaultSessionFeature();
-        private readonly static Func<IFeatureCollection, ISessionFeature> _nullSessionFeature = f => null;
+        private readonly static Func<IFeatureCollection, ISessionFeature?> _nullSessionFeature = f => null;
         private readonly static Func<IFeatureCollection, IHttpRequestIdentifierFeature> _newHttpRequestIdentifierFeature = f => new HttpRequestIdentifierFeature();
 
         private FeatureReferences<FeatureInterfaces> _features;
@@ -32,14 +37,18 @@ namespace Microsoft.AspNetCore.Http
         private readonly DefaultHttpRequest _request;
         private readonly DefaultHttpResponse _response;
 
-        private DefaultConnectionInfo _connection;
-        private DefaultWebSocketManager _websockets;
+        private DefaultConnectionInfo? _connection;
+        private DefaultWebSocketManager? _websockets;
+
+        // This is field exists to make analyzing memory dumps easier.
+        // https://github.com/dotnet/aspnetcore/issues/29709
+        internal bool _active;
 
         /// <summary>
         /// Initializes a new instance of the <see cref="DefaultHttpContext"/> class.
         /// </summary>
         public DefaultHttpContext()
-            : this(new FeatureCollection())
+            : this(new FeatureCollection(DefaultFeatureCollectionSize))
         {
             Features.Set<IHttpRequestFeature>(new HttpRequestFeature());
             Features.Set<IHttpResponseFeature>(new HttpResponseFeature());
@@ -72,6 +81,7 @@ namespace Microsoft.AspNetCore.Http
             _response.Initialize(revision);
             _connection?.Initialize(features, revision);
             _websockets?.Initialize(features, revision);
+            _active = true;
         }
 
         /// <summary>
@@ -84,6 +94,7 @@ namespace Microsoft.AspNetCore.Http
             _response.Uninitialize();
             _connection?.Uninitialize();
             _websockets?.Uninitialize();
+            _active = false;
         }
 
         /// <summary>
@@ -92,7 +103,7 @@ namespace Microsoft.AspNetCore.Http
         /// <returns>
         /// <see cref="FormOptions"/>        
         /// </returns>
-        public FormOptions FormOptions { get; set; }
+        public FormOptions FormOptions { get; set; } = default!;
 
         /// <summary>
         /// Gets or sets the <see cref="IServiceScopeFactory" /> for this instance.
@@ -100,29 +111,28 @@ namespace Microsoft.AspNetCore.Http
         /// <returns>   
         /// <see cref="IServiceScopeFactory"/>      
         /// </returns>
-        public IServiceScopeFactory ServiceScopeFactory { get; set; }
+        public IServiceScopeFactory ServiceScopeFactory { get; set; } = default!;
 
         private IItemsFeature ItemsFeature =>
-            _features.Fetch(ref _features.Cache.Items, _newItemsFeature);
+            _features.Fetch(ref _features.Cache.Items, _newItemsFeature)!;
 
         private IServiceProvidersFeature ServiceProvidersFeature =>
-            _features.Fetch(ref _features.Cache.ServiceProviders, this, _newServiceProvidersFeature);
+            _features.Fetch(ref _features.Cache.ServiceProviders, this, _newServiceProvidersFeature)!;
 
         private IHttpAuthenticationFeature HttpAuthenticationFeature =>
-            _features.Fetch(ref _features.Cache.Authentication, _newHttpAuthenticationFeature);
+            _features.Fetch(ref _features.Cache.Authentication, _newHttpAuthenticationFeature)!;
 
         private IHttpRequestLifetimeFeature LifetimeFeature =>
-            _features.Fetch(ref _features.Cache.Lifetime, _newHttpRequestLifetimeFeature);
+            _features.Fetch(ref _features.Cache.Lifetime, _newHttpRequestLifetimeFeature)!;
 
         private ISessionFeature SessionFeature =>
-            _features.Fetch(ref _features.Cache.Session, _newSessionFeature);
+            _features.Fetch(ref _features.Cache.Session, _newSessionFeature)!;
 
-        private ISessionFeature SessionFeatureOrNull =>
+        private ISessionFeature? SessionFeatureOrNull =>
             _features.Fetch(ref _features.Cache.Session, _nullSessionFeature);
 
-
         private IHttpRequestIdentifierFeature RequestIdentifierFeature =>
-            _features.Fetch(ref _features.Cache.RequestIdentifier, _newHttpRequestIdentifierFeature);
+            _features.Fetch(ref _features.Cache.RequestIdentifier, _newHttpRequestIdentifierFeature)!;
 
         /// <inheritdoc/>
         public override IFeatureCollection Features => _features.Collection ?? ContextDisposed();
@@ -156,7 +166,7 @@ namespace Microsoft.AspNetCore.Http
         }
 
         /// <inheritdoc/>
-        public override IDictionary<object, object> Items
+        public override IDictionary<object, object?> Items
         {
             get { return ItemsFeature.Items; }
             set { ItemsFeature.Items = value; }
@@ -206,6 +216,9 @@ namespace Microsoft.AspNetCore.Http
         // We send an anonymous object with an HttpContext property
         // via DiagnosticListener in various events throughout the pipeline. Instead
         // we just send the HttpContext to avoid extra allocations
+        /// <summary>
+        /// This API is used by ASP.NET Core's infrastructure and should not be used by application code.
+        /// </summary>
         [EditorBrowsable(EditorBrowsableState.Never)]
         public HttpContext HttpContext => this;
 
@@ -221,6 +234,7 @@ namespace Microsoft.AspNetCore.Http
             return null;
         }
 
+        [DoesNotReturn]
         private static void ThrowContextDisposed()
         {
             throw new ObjectDisposedException(nameof(HttpContext), $"Request has finished and {nameof(HttpContext)} disposed.");
@@ -228,12 +242,12 @@ namespace Microsoft.AspNetCore.Http
 
         struct FeatureInterfaces
         {
-            public IItemsFeature Items;
-            public IServiceProvidersFeature ServiceProviders;
-            public IHttpAuthenticationFeature Authentication;
-            public IHttpRequestLifetimeFeature Lifetime;
-            public ISessionFeature Session;
-            public IHttpRequestIdentifierFeature RequestIdentifier;
+            public IItemsFeature? Items;
+            public IServiceProvidersFeature? ServiceProviders;
+            public IHttpAuthenticationFeature? Authentication;
+            public IHttpRequestLifetimeFeature? Lifetime;
+            public ISessionFeature? Session;
+            public IHttpRequestIdentifierFeature? RequestIdentifier;
         }
     }
 }

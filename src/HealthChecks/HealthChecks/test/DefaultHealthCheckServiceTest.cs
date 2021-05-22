@@ -14,6 +14,8 @@ using Microsoft.Extensions.Logging.Testing;
 using Microsoft.Extensions.Options;
 using Xunit;
 
+#nullable enable
+
 namespace Microsoft.Extensions.Diagnostics.HealthChecks
 {
     public class DefaultHealthCheckServiceTest
@@ -139,7 +141,7 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
                     Assert.Equal("ExceptionCheck", actual.Key);
                     Assert.Equal(ExceptionMessage, actual.Value.Description);
                     Assert.Equal(HealthStatus.Unhealthy, actual.Value.Status);
-                    Assert.Equal(ExceptionMessage, actual.Value.Exception.Message);
+                    Assert.Equal(ExceptionMessage, actual.Value.Exception!.Message);
                     Assert.Empty(actual.Value.Data);
                     Assert.Equal(actual.Value.Tags, exceptionTags);
                 },
@@ -148,7 +150,7 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
                     Assert.Equal("OperationExceptionCheck", actual.Key);
                     Assert.Equal("A timeout occurred while running check.", actual.Value.Description);
                     Assert.Equal(HealthStatus.Unhealthy, actual.Value.Status);
-                    Assert.Equal(OperationCancelledMessage, actual.Value.Exception.Message);
+                    Assert.Equal(OperationCancelledMessage, actual.Value.Exception!.Message);
                     Assert.Empty(actual.Value.Data);
                     Assert.Equal(actual.Value.Tags, operationExceptionTags);
                 });
@@ -243,7 +245,7 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
         public async Task CheckHealthAsync_Cancellation_CanPropagate()
         {
             // Arrange
-            var insideCheck = new TaskCompletionSource<object>();
+            var insideCheck = new TaskCompletionSource<object?>();
 
             var service = CreateHealthChecksService(b =>
             {
@@ -401,6 +403,37 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
         }
 
         [Fact]
+        // related to issue https://github.com/dotnet/aspnetcore/issues/14453
+        public async Task CheckHealthAsync_CheckCanDependOnScopedService_per_check()
+        {
+            // Arrange
+            var service = CreateHealthChecksService(b =>
+            {
+                b.Services.AddScoped<CantBeMultiThreadedService>();
+
+                b.AddCheck<CheckWithServiceNotMultiThreadDependency>("Test");
+                b.AddCheck<CheckWithServiceNotMultiThreadDependency>("Test2");
+            });
+
+            // Act
+            var results = await service.CheckHealthAsync();
+
+            // Assert
+            Assert.Collection(
+                results.Entries,
+                actual =>
+                {
+                    Assert.Equal("Test", actual.Key);
+                    Assert.Equal(HealthStatus.Healthy, actual.Value.Status);
+                },
+                actual =>
+                {
+                    Assert.Equal("Test2", actual.Key);
+                    Assert.Equal(HealthStatus.Healthy, actual.Value.Status);
+                });
+        }
+
+        [Fact]
         public async Task CheckHealthAsync_CheckCanDependOnSingletonService()
         {
             // Arrange
@@ -428,10 +461,10 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
         public async Task CheckHealthAsync_ChecksAreRunInParallel()
         {
             // Arrange
-            var input1 = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var input2 = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var output1 = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var output2 = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var input1 = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var input2 = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var output1 = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var output2 = new TaskCompletionSource<object?>(TaskCreationOptions.RunContinuationsAsynchronously);
 
             var service = CreateHealthChecksService(b =>
             {
@@ -531,6 +564,40 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
             Assert.False(hangs);
         }
 
+        [Fact]
+        public async Task CheckHealthAsync_WithFailureStatus()
+        {
+            // Arrange
+            var service = CreateHealthChecksService(b =>
+            {
+                b.AddCheck<FailCapturingCheck>("degraded", HealthStatus.Degraded);
+                b.AddCheck<FailCapturingCheck>("healthy", HealthStatus.Healthy);
+                b.AddCheck<FailCapturingCheck>("unhealthy", HealthStatus.Unhealthy);
+            });
+
+            // Act
+            var results = await service.CheckHealthAsync();
+
+            // Assert
+            Assert.Collection(
+                results.Entries,
+                actual =>
+                {
+                    Assert.Equal("degraded", actual.Key);
+                    Assert.Equal(HealthStatus.Degraded, actual.Value.Status);
+                },
+                actual =>
+                {
+                    Assert.Equal("healthy", actual.Key);
+                    Assert.Equal(HealthStatus.Healthy, actual.Value.Status);
+                },
+                actual =>
+                {
+                    Assert.Equal("unhealthy", actual.Key);
+                    Assert.Equal(HealthStatus.Unhealthy, actual.Value.Status);
+                });
+        }
+
         private static DefaultHealthCheckService CreateHealthChecksService(Action<IHealthChecksBuilder> configure)
         {
             var services = new ServiceCollection();
@@ -548,6 +615,20 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
 
         private class AnotherService { }
 
+        private class CantBeMultiThreadedService
+        {
+            private readonly object _lock = new();
+            private bool _wasUsed;
+            public void Check()
+            {
+                lock (_lock)
+                {
+                    if (_wasUsed) throw new InvalidOperationException("Should only used once");
+                    _wasUsed = true;
+                }
+            }
+        }
+
         private class CheckWithServiceDependency : IHealthCheck
         {
             public CheckWithServiceDependency(AnotherService _)
@@ -560,6 +641,30 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
             }
         }
 
+        private class CheckWithServiceNotMultiThreadDependency : IHealthCheck
+        {
+            private readonly CantBeMultiThreadedService _service;
+
+            public CheckWithServiceNotMultiThreadDependency(CantBeMultiThreadedService service)
+            {
+                _service = service;
+            }
+
+            public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+            {
+                try
+                {
+                    _service.Check();
+                    return Task.FromResult(HealthCheckResult.Healthy());
+                }
+                catch (InvalidOperationException e)
+                {
+                    return Task.FromResult(HealthCheckResult.Unhealthy("failed", e));
+                }
+
+            }
+        }
+
         private class NameCapturingCheck : IHealthCheck
         {
             public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
@@ -569,6 +674,14 @@ namespace Microsoft.Extensions.Diagnostics.HealthChecks
                     { "name", context.Registration.Name },
                 };
                 return Task.FromResult(HealthCheckResult.Healthy(data: data));
+            }
+        }
+
+        private class FailCapturingCheck : IHealthCheck
+        {
+            public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default)
+            {
+                throw new Exception("check failed");
             }
         }
     }

@@ -3,7 +3,7 @@
 
 using System;
 using System.Buffers;
-using System.Diagnostics.Contracts;
+using System.Diagnostics;
 using System.IO;
 using System.IO.Pipelines;
 using System.Threading;
@@ -18,7 +18,7 @@ namespace Microsoft.AspNetCore.TestHost
     {
         private bool _readerComplete;
         private bool _aborted;
-        private Exception _abortException;
+        private Exception? _abortException;
 
         private readonly object _abortLock = new object();
         private readonly Action _abortRequest;
@@ -105,15 +105,15 @@ namespace Microsoft.AspNetCore.TestHost
         {
             if (buffer == null)
             {
-                throw new ArgumentNullException("buffer");
+                throw new ArgumentNullException(nameof(buffer));
             }
             if (offset < 0 || offset > buffer.Length)
             {
-                throw new ArgumentOutOfRangeException("offset", offset, string.Empty);
+                throw new ArgumentOutOfRangeException(nameof(offset), offset, string.Empty);
             }
             if (count <= 0 || count > buffer.Length - offset)
             {
-                throw new ArgumentOutOfRangeException("count", count, string.Empty);
+                throw new ArgumentOutOfRangeException(nameof(count), count, string.Empty);
             }
         }
 
@@ -124,7 +124,7 @@ namespace Microsoft.AspNetCore.TestHost
 
         internal void Abort(Exception innerException)
         {
-            Contract.Requires(innerException != null);
+            Debug.Assert(innerException != null);
 
             lock (_abortLock)
             {

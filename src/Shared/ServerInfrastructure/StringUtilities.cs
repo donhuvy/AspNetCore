@@ -11,10 +11,116 @@ using System.Runtime.Intrinsics;
 using System.Runtime.Intrinsics.X86;
 using System.Text;
 
+#nullable enable
+
 namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
 {
     internal static class StringUtilities
     {
+        private static readonly SpanAction<char, IntPtr> s_getAsciiOrUTF8StringNonNullCharacters = GetAsciiStringNonNullCharactersWithMarker;
+        private static readonly SpanAction<char, IntPtr> s_getAsciiStringNonNullCharacters = GetAsciiStringNonNullCharacters;
+        private static readonly SpanAction<char, IntPtr> s_getLatin1StringNonNullCharacters = GetLatin1StringNonNullCharacters;
+        private static readonly SpanAction<char, (string? str, char separator, uint number)> s_populateSpanWithHexSuffix = PopulateSpanWithHexSuffix;
+
+        public static unsafe string GetAsciiOrUTF8StringNonNullCharacters(this ReadOnlySpan<byte> span, Encoding defaultEncoding)
+        {
+            if (span.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            fixed (byte* source = &MemoryMarshal.GetReference(span))
+            {
+                var resultString = string.Create(span.Length, (IntPtr)source, s_getAsciiOrUTF8StringNonNullCharacters);
+
+                // If resultString is marked, perform UTF-8 encoding
+                if (resultString[0] == '\0')
+                {
+                    // null characters are considered invalid
+                    if (span.IndexOf((byte)0) != -1)
+                    {
+                        throw new InvalidOperationException();
+                    }
+
+                    try
+                    {
+                        resultString = defaultEncoding.GetString(span);
+                    }
+                    catch (DecoderFallbackException)
+                    {
+                        throw new InvalidOperationException();
+                    }
+                }
+
+                return resultString;
+            }
+        }
+
+        private static unsafe void GetAsciiStringNonNullCharactersWithMarker(Span<char> buffer, IntPtr state)
+        {
+            fixed (char* output = &MemoryMarshal.GetReference(buffer))
+            {
+                // This version of AsciiUtilities returns false if there are any null ('\0') or non-Ascii
+                // character (> 127) in the string.
+                if (!TryGetAsciiString((byte*)state.ToPointer(), output, buffer.Length))
+                {
+                    // Mark resultString for UTF-8 encoding
+                    output[0] = '\0';
+                }
+            }
+        }
+
+        public static unsafe string GetAsciiStringNonNullCharacters(this ReadOnlySpan<byte> span)
+        {
+            if (span.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            fixed (byte* source = &MemoryMarshal.GetReference(span))
+            {
+                return string.Create(span.Length, (IntPtr)source, s_getAsciiStringNonNullCharacters);
+            }
+        }
+
+        private static unsafe void GetAsciiStringNonNullCharacters(Span<char> buffer, IntPtr state)
+        {
+            fixed (char* output = &MemoryMarshal.GetReference(buffer))
+            {
+                // This version of AsciiUtilities returns false if there are any null ('\0') or non-Ascii
+                // character (> 127) in the string.
+                if (!TryGetAsciiString((byte*)state.ToPointer(), output, buffer.Length))
+                {
+                    throw new InvalidOperationException();
+                }
+            }
+        }
+
+        public static unsafe string GetLatin1StringNonNullCharacters(this ReadOnlySpan<byte> span)
+        {
+            if (span.IsEmpty)
+            {
+                return string.Empty;
+            }
+
+            fixed (byte* source = &MemoryMarshal.GetReference(span))
+            {
+                return string.Create(span.Length, (IntPtr)source, s_getLatin1StringNonNullCharacters);
+            }
+        }
+
+        private static unsafe void GetLatin1StringNonNullCharacters(Span<char> buffer, IntPtr state)
+        {
+            fixed (char* output = &MemoryMarshal.GetReference(buffer))
+            {
+                if (!TryGetLatin1String((byte*)state.ToPointer(), output, buffer.Length))
+                {
+                    // null characters are considered invalid
+                    throw new InvalidOperationException();
+                }
+            }
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
         public static unsafe bool TryGetAsciiString(byte* input, char* output, int count)
         {
@@ -221,7 +327,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                 // If Vector not-accelerated or remaining less than vector size
                 if (!Vector.IsHardwareAccelerated || input > end - Vector<sbyte>.Count)
                 {
-                    if (IntPtr.Size == 8) // Use Intrinsic switch for branch elimination
+                    if (Environment.Is64BitProcess) // Use Intrinsic switch for branch elimination
                     {
                         // 64-bit: Loop longs by default
                         while (input <= end - sizeof(long))
@@ -311,7 +417,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
         }
 
         [MethodImpl(MethodImplOptions.AggressiveOptimization)]
-        public unsafe static bool BytesOrdinalEqualsStringAndAscii(string previousValue, ReadOnlySpan<byte> newValue)
+        public static bool BytesOrdinalEqualsStringAndAscii(string previousValue, ReadOnlySpan<byte> newValue)
         {
             // previousValue is a previously materialized string which *must* have already passed validation.
             Debug.Assert(IsValidHeaderString(previousValue));
@@ -325,17 +431,13 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                 goto NotEqual;
             }
 
-            // Use IntPtr values rather than int, to avoid unnecessary 32 -> 64 movs on 64-bit.
-            // Unfortunately this means we also need to cast to byte* for comparisons as IntPtr doesn't
-            // support operator comparisons (e.g. <=, >, etc).
-            //
             // Note: Pointer comparison is unsigned, so we use the compare pattern (offset + length <= count)
             // rather than (offset <= count - length) which we'd do with signed comparison to avoid overflow.
             // This isn't problematic as we know the maximum length is max string length (from test above)
             // which is a signed value so half the size of the unsigned pointer value so we can safely add
             // a Vector<byte>.Count to it without overflowing.
-            var count = (IntPtr)newValue.Length;
-            var offset = (IntPtr)0;
+            var count = (nint)newValue.Length;
+            var offset = (nint)0;
 
             // Get references to the first byte in the span, and the first char in the string.
             ref var bytes = ref MemoryMarshal.GetReference(newValue);
@@ -344,12 +446,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
             do
             {
                 // If Vector not-accelerated or remaining less than vector size
-                if (!Vector.IsHardwareAccelerated || (byte*)(offset + Vector<byte>.Count) > (byte*)count)
+                if (!Vector.IsHardwareAccelerated || (offset + Vector<byte>.Count) > count)
                 {
                     if (IntPtr.Size == 8) // Use Intrinsic switch for branch elimination
                     {
                         // 64-bit: Loop longs by default
-                        while ((byte*)(offset + sizeof(long)) <= (byte*)count)
+                        while ((offset + sizeof(long)) <= count)
                         {
                             if (!WidenFourAsciiBytesToUtf16AndCompareToChars(
                                     ref Unsafe.Add(ref str, offset),
@@ -363,7 +465,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
 
                             offset += sizeof(long);
                         }
-                        if ((byte*)(offset + sizeof(int)) <= (byte*)count)
+                        if ((offset + sizeof(int)) <= count)
                         {
                             if (!WidenFourAsciiBytesToUtf16AndCompareToChars(
                                 ref Unsafe.Add(ref str, offset),
@@ -378,7 +480,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                     else
                     {
                         // 32-bit: Loop ints by default
-                        while ((byte*)(offset + sizeof(int)) <= (byte*)count)
+                        while ((offset + sizeof(int)) <= count)
                         {
                             if (!WidenFourAsciiBytesToUtf16AndCompareToChars(
                                 ref Unsafe.Add(ref str, offset),
@@ -390,7 +492,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                             offset += sizeof(int);
                         }
                     }
-                    if ((byte*)(offset + sizeof(short)) <= (byte*)count)
+                    if ((offset + sizeof(short)) <= count)
                     {
                         if (!WidenTwoAsciiBytesToUtf16AndCompareToChars(
                             ref Unsafe.Add(ref str, offset),
@@ -401,7 +503,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
 
                         offset += sizeof(short);
                     }
-                    if ((byte*)offset < (byte*)count)
+                    if (offset < count)
                     {
                         var ch = (char)Unsafe.Add(ref bytes, offset);
                         if (((ch & 0x80) != 0) || Unsafe.Add(ref str, offset) != ch)
@@ -449,11 +551,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                     }
 
                     offset += Vector<byte>.Count;
-                } while ((byte*)(offset + Vector<byte>.Count) <= (byte*)count);
+                } while ((offset + Vector<byte>.Count) <= count);
 
                 // Vector path done, loop back to do non-Vector
                 // If is a exact multiple of vector size, bail now
-            } while ((byte*)offset < (byte*)count);
+            } while (offset < count);
 
             // If we get here (input is exactly a multiple of Vector length) then there are no inequalities via widening;
             // so the input bytes are both ascii and a match to the string if it was converted via Encoding.ASCII.GetString(...)
@@ -573,7 +675,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
             return ((value & 0x8080u) == 0);
         }
 
-        private unsafe static bool IsValidHeaderString(string value)
+        private static bool IsValidHeaderString(string value)
         {
             // Method for Debug.Assert to ensure BytesOrdinalEqualsStringAndAscii
             // is not called with an unvalidated string comparitor.
@@ -588,7 +690,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
                 return false;
             }
         }
-        private static readonly SpanAction<char, (string str, char separator, uint number)> s_populateSpanWithHexSuffix = PopulateSpanWithHexSuffix;
 
         /// <summary>
         /// A faster version of String.Concat(<paramref name="str"/>, <paramref name="separator"/>, <paramref name="number"/>.ToString("X8"))
@@ -608,7 +709,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
             return string.Create(length, (str, separator, number), s_populateSpanWithHexSuffix);
         }
 
-        private static void PopulateSpanWithHexSuffix(Span<char> buffer, (string str, char separator, uint number) tuple)
+        private static void PopulateSpanWithHexSuffix(Span<char> buffer, (string? str, char separator, uint number) tuple)
         {
             var (tupleStr, tupleSeparator, tupleNumber) = tuple;
 
@@ -626,7 +727,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure
             {
                 // These must be explicity typed as ReadOnlySpan<byte>
                 // They then become a non-allocating mappings to the data section of the assembly.
-                // This uses C# compiler's ability to refer to static data directly. For more information see https://vcsjones.dev/2019/02/01/csharp-readonly-span-bytes-static 
+                // This uses C# compiler's ability to refer to static data directly. For more information see https://vcsjones.dev/2019/02/01/csharp-readonly-span-bytes-static
                 ReadOnlySpan<byte> shuffleMaskData = new byte[16]
                 {
                     0xF, 0xF, 3, 0xF,

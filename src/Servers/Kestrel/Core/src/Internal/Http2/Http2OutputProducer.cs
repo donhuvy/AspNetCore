@@ -34,8 +34,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         private readonly Pipe _pipe;
         private readonly ConcurrentPipeWriter _pipeWriter;
         private readonly PipeReader _pipeReader;
-        private readonly ManualResetValueTaskSource<object> _resetAwaitable = new ManualResetValueTaskSource<object>();
-        private IMemoryOwner<byte> _fakeMemoryOwner;
+        private readonly ManualResetValueTaskSource<object?> _resetAwaitable = new ManualResetValueTaskSource<object?>();
+        private IMemoryOwner<byte>? _fakeMemoryOwner;
         private bool _startedWritingDataFrames;
         private bool _streamCompleted;
         private bool _suffixSent;
@@ -43,7 +43,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         private bool _writerComplete;
 
         // Internal for testing
-        internal ValueTask _dataWriteProcessingTask;
+        internal Task _dataWriteProcessingTask;
         internal bool _disposed;
 
         /// <summary>The core logic for the IValueTaskSource implementation.</summary>
@@ -54,7 +54,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         // associated with the implementation is just delegated to the ManualResetValueTaskSourceCore.
         private ValueTask<FlushResult> GetWaiterTask() => new ValueTask<FlushResult>(this, _responseCompleteTaskSource.Version);
         ValueTaskSourceStatus IValueTaskSource<FlushResult>.GetStatus(short token) => _responseCompleteTaskSource.GetStatus(token);
-        void IValueTaskSource<FlushResult>.OnCompleted(Action<object> continuation, object state, short token, ValueTaskSourceOnCompletedFlags flags) => _responseCompleteTaskSource.OnCompleted(continuation, state, token, flags);
+        void IValueTaskSource<FlushResult>.OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) => _responseCompleteTaskSource.OnCompleted(continuation, state, token, flags);
         FlushResult IValueTaskSource<FlushResult>.GetResult(short token) => _responseCompleteTaskSource.GetResult(token);
 
         public Http2OutputProducer(Http2Stream stream, Http2StreamContext context, StreamOutputFlowControl flowControl)
@@ -129,6 +129,11 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             _stream.ResetAndAbort(abortReason, Http2ErrorCode.INTERNAL_ERROR);
         }
 
+        void IHttpOutputAborter.OnInputOrOutputCompleted()
+        {
+            _stream.ResetAndAbort(new ConnectionAbortedException($"{nameof(Http2OutputProducer)}.{nameof(ProcessDataWrites)} has completed."), Http2ErrorCode.INTERNAL_ERROR);
+        }
+
         public ValueTask<FlushResult> FlushAsync(CancellationToken cancellationToken)
         {
             if (cancellationToken.IsCancellationRequested)
@@ -175,7 +180,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             }
         }
 
-        public void WriteResponseHeaders(int statusCode, string ReasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, bool appCompleted)
+        public void WriteResponseHeaders(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, bool appCompleted)
         {
             lock (_dataWriterLock)
             {
@@ -348,7 +353,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             }
         }
 
-        public ValueTask<FlushResult> FirstWriteAsync(int statusCode, string reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
+        public ValueTask<FlushResult> FirstWriteAsync(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
         {
             lock (_dataWriterLock)
             {
@@ -363,7 +368,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             throw new NotImplementedException();
         }
 
-        public ValueTask<FlushResult> FirstWriteChunkedAsync(int statusCode, string reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
+        public ValueTask<FlushResult> FirstWriteChunkedAsync(int statusCode, string? reasonPhrase, HttpResponseHeaders responseHeaders, bool autoChunk, ReadOnlySpan<byte> data, CancellationToken cancellationToken)
         {
             throw new NotImplementedException();
         }
@@ -389,7 +394,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         {
         }
 
-        private async ValueTask ProcessDataWrites()
+        private async Task ProcessDataWrites()
         {
             // ProcessDataWrites runs for the lifetime of the Http2OutputProducer, and is designed to be reused by multiple streams.
             // When Http2OutputProducer is no longer used (e.g. a stream is aborted and will no longer be used, or the connection is closed)
@@ -418,16 +423,19 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
                         {
                             // Output is ending and there are trailers to write
                             // Write any remaining content then write trailers
-                            if (readResult.Buffer.Length > 0)
-                            {
-                                // Only flush if required (i.e. content length exceeds flow control availability)
-                                // Writing remaining content without flushing allows content and trailers to be sent in the same packet
-                                await _frameWriter.WriteDataAsync(StreamId, _flowControl, readResult.Buffer, endStream: false, firstWrite, forceFlush: false);
-                            }
 
                             _stream.ResponseTrailers.SetReadOnly();
                             _stream.DecrementActiveClientStreamCount();
-                            flushResult = await _frameWriter.WriteResponseTrailers(StreamId, _stream.ResponseTrailers);
+
+                            if (readResult.Buffer.Length > 0)
+                            {
+                                // It is faster to write data and trailers together. Locking once reduces lock contention.
+                                flushResult = await _frameWriter.WriteDataAndTrailersAsync(StreamId, _flowControl, readResult.Buffer, firstWrite, _stream.ResponseTrailers);
+                            }
+                            else
+                            {
+                                flushResult = await _frameWriter.WriteResponseTrailersAsync(StreamId, _stream.ResponseTrailers);
+                            }
                         }
                         else if (readResult.IsCompleted && _streamEnded)
                         {
@@ -460,7 +468,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
                     _log.LogCritical(ex, nameof(Http2OutputProducer) + "." + nameof(ProcessDataWrites) + " observed an unexpected exception.");
                 }
 
-                _pipeReader.Complete();
+                await _pipeReader.CompleteAsync();
 
                 // Signal via WriteStreamSuffixAsync to the stream that output has finished.
                 // Stream state will move to RequestProcessingStatus.ResponseCompleted

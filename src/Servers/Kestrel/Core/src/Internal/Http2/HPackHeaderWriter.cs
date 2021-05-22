@@ -12,7 +12,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         /// <summary>
         /// Begin encoding headers in the first HEADERS frame.
         /// </summary>
-        public static bool BeginEncodeHeaders(int statusCode, HPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
+        public static bool BeginEncodeHeaders(int statusCode, DynamicHPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
         {
             length = 0;
 
@@ -43,7 +43,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         /// <summary>
         /// Begin encoding headers in the first HEADERS frame.
         /// </summary>
-        public static bool BeginEncodeHeaders(HPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
+        public static bool BeginEncodeHeaders(DynamicHPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
         {
             length = 0;
 
@@ -66,12 +66,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         /// <summary>
         /// Continue encoding headers in the next HEADERS frame. The enumerator should already have a current value.
         /// </summary>
-        public static bool ContinueEncodeHeaders(HPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
+        public static bool ContinueEncodeHeaders(DynamicHPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, out int length)
         {
             return EncodeHeadersCore(hpackEncoder, headersEnumerator, buffer, throwIfNoneEncoded: true, out length);
         }
 
-        private static bool EncodeStatusHeader(int statusCode, HPackEncoder hpackEncoder, Span<byte> buffer, out int length)
+        private static bool EncodeStatusHeader(int statusCode, DynamicHPackEncoder hpackEncoder, Span<byte> buffer, out int length)
         {
             switch (statusCode)
             {
@@ -83,7 +83,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
                 case 404:
                 case 500:
                     // Status codes which exist in the HTTP/2 StaticTable.
-                    return HPackEncoder.EncodeIndexedHeaderField(H2StaticTable.StatusIndex[statusCode], buffer, out length);
+                    return HPackEncoder.EncodeIndexedHeaderField(H2StaticTable.GetStatusIndex(statusCode), buffer, out length);
                 default:
                     const string name = ":status";
                     var value = StatusCodes.ToStatusString(statusCode);
@@ -91,7 +91,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
             }
         }
 
-        private static bool EncodeHeadersCore(HPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, bool throwIfNoneEncoded, out int length)
+        private static bool EncodeHeadersCore(DynamicHPackEncoder hpackEncoder, Http2HeadersEnumerator headersEnumerator, Span<byte> buffer, bool throwIfNoneEncoded, out int length)
         {
             var currentLength = 0;
             do
@@ -151,13 +151,15 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http2
         private static bool IsSensitive(int staticTableIndex, string name)
         {
             // Set-Cookie could contain sensitive data.
-            if (staticTableIndex == H2StaticTable.SetCookie)
+            switch (staticTableIndex)
             {
-                return true;
-            }
-            if (string.Equals(name, "Content-Disposition", StringComparison.OrdinalIgnoreCase))
-            {
-                return true;
+                case H2StaticTable.SetCookie:
+                case H2StaticTable.ContentDisposition:
+                    return true;
+                case -1:
+                    // Content-Disposition currently isn't a known header so a
+                    // static index probably won't be specified.
+                    return string.Equals(name, "Content-Disposition", StringComparison.OrdinalIgnoreCase);
             }
 
             return false;

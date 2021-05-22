@@ -4,7 +4,11 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.Primitives;
+using Microsoft.AspNetCore.Internal;
 using Microsoft.Net.Http.Headers;
+using System.Linq;
 
 namespace Microsoft.AspNetCore.Http
 {
@@ -12,28 +16,30 @@ namespace Microsoft.AspNetCore.Http
     {
         public static readonly RequestCookieCollection Empty = new RequestCookieCollection();
         private static readonly string[] EmptyKeys = Array.Empty<string>();
-        private static readonly Enumerator EmptyEnumerator = new Enumerator();
-        // Pre-box
-        private static readonly IEnumerator<KeyValuePair<string, string>> EmptyIEnumeratorType = EmptyEnumerator;
-        private static readonly IEnumerator EmptyIEnumerator = EmptyEnumerator;
 
-        private Dictionary<string, string> Store { get; set; }
+        // Pre-box
+        private static readonly IEnumerator<KeyValuePair<string, string>> EmptyIEnumeratorType = default(Enumerator);
+        private static readonly IEnumerator EmptyIEnumerator = default(Enumerator);
+
+        private AdaptiveCapacityDictionary<string, string> Store { get; set; }
 
         public RequestCookieCollection()
         {
-        }
-
-        public RequestCookieCollection(Dictionary<string, string> store)
-        {
-            Store = store;
+            Store = new AdaptiveCapacityDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         }
 
         public RequestCookieCollection(int capacity)
         {
-            Store = new Dictionary<string, string>(capacity, StringComparer.OrdinalIgnoreCase);
+            Store = new AdaptiveCapacityDictionary<string, string>(capacity, StringComparer.OrdinalIgnoreCase);
         }
 
-        public string this[string key]
+        // For tests
+        public RequestCookieCollection(Dictionary<string, string> store)
+        {
+            Store = new AdaptiveCapacityDictionary<string, string>(store);
+        }
+
+        public string? this[string key]
         {
             get
             {
@@ -47,8 +53,7 @@ namespace Microsoft.AspNetCore.Http
                     return null;
                 }
 
-                string value;
-                if (TryGetValue(key, out value))
+                if (TryGetValue(key, out var value))
                 {
                     return value;
                 }
@@ -56,29 +61,23 @@ namespace Microsoft.AspNetCore.Http
             }
         }
 
-        public static RequestCookieCollection Parse(IList<string> values)
+        public static RequestCookieCollection Parse(StringValues values)
+           => ParseInternal(values, AppContext.TryGetSwitch(ResponseCookies.EnableCookieNameEncoding, out var enabled) && enabled);
+
+        internal static RequestCookieCollection ParseInternal(StringValues values, bool enableCookieNameEncoding)
         {
             if (values.Count == 0)
             {
                 return Empty;
             }
+            var collection = new RequestCookieCollection(values.Count);
+            var store = collection.Store!;
 
-            IList<CookieHeaderValue> cookies;
-            if (CookieHeaderValue.TryParseList(values, out cookies))
+            if (CookieHeaderParserShared.TryParseValues(values, store, enableCookieNameEncoding, supportsMultipleValues: true))
             {
-                if (cookies.Count == 0)
+                if (store.Count == 0)
                 {
                     return Empty;
-                }
-
-                var collection = new RequestCookieCollection(cookies.Count);
-                var store = collection.Store;
-                for (var i = 0; i < cookies.Count; i++)
-                {
-                    var cookie = cookies[i];
-                    var name = Uri.UnescapeDataString(cookie.Name.Value);
-                    var value = Uri.UnescapeDataString(cookie.Value.Value);
-                    store[name] = value;
                 }
 
                 return collection;
@@ -119,13 +118,14 @@ namespace Microsoft.AspNetCore.Http
             return Store.ContainsKey(key);
         }
 
-        public bool TryGetValue(string key, out string value)
+        public bool TryGetValue(string key, [MaybeNullWhen(false)] out string? value)
         {
             if (Store == null)
             {
                 value = null;
                 return false;
             }
+
             return Store.TryGetValue(key, out value);
         }
 
@@ -138,7 +138,7 @@ namespace Microsoft.AspNetCore.Http
             if (Store == null || Store.Count == 0)
             {
                 // Non-boxed Enumerator
-                return EmptyEnumerator;
+                return default;
             }
             // Non-boxed Enumerator
             return new Enumerator(Store.GetEnumerator());
@@ -177,10 +177,10 @@ namespace Microsoft.AspNetCore.Http
         public struct Enumerator : IEnumerator<KeyValuePair<string, string>>
         {
             // Do NOT make this readonly, or MoveNext will not work
-            private Dictionary<string, string>.Enumerator _dictionaryEnumerator;
+            private AdaptiveCapacityDictionary<string, string>.Enumerator _dictionaryEnumerator;
             private bool _notEmpty;
 
-            internal Enumerator(Dictionary<string, string>.Enumerator dictionaryEnumerator)
+            internal Enumerator(AdaptiveCapacityDictionary<string, string>.Enumerator dictionaryEnumerator)
             {
                 _dictionaryEnumerator = dictionaryEnumerator;
                 _notEmpty = true;
@@ -202,7 +202,7 @@ namespace Microsoft.AspNetCore.Http
                     if (_notEmpty)
                     {
                         var current = _dictionaryEnumerator.Current;
-                        return new KeyValuePair<string, string>(current.Key, current.Value);
+                        return new KeyValuePair<string, string>(current.Key, (string)current.Value!);
                     }
                     return default(KeyValuePair<string, string>);
                 }

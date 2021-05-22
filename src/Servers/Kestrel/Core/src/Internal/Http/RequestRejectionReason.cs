@@ -26,14 +26,12 @@ namespace Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http
         RequestHeadersTimeout,
         RequestBodyTimeout,
         FinalTransferCodingNotChunked,
-        LengthRequired,
         LengthRequiredHttp10,
         OptionsMethodRequired,
         ConnectMethodRequired,
         MissingHostHeader,
         MultipleHostHeaders,
         InvalidHostHeader,
-        UpgradeRequestCannotHavePayload,
         RequestBodyExceedsContentLength
     }
 }

@@ -15,7 +15,7 @@ namespace Microsoft.AspNetCore.Server.IIS.Core
     {
         // This locks access to _completed.
         private readonly object _contextLock = new object();
-        private bool _completed = false;
+        private bool _completed;
 
         private readonly Pipe _pipe;
 
@@ -40,7 +40,7 @@ namespace Microsoft.AspNetCore.Server.IIS.Core
             return FlushAsync(_pipe.Writer, cancellationToken);
         }
 
-        public void Dispose()
+        public void Complete()
         {
             lock (_contextLock)
             {

@@ -1,13 +1,12 @@
-﻿// Copyright (c) .NET Foundation. All rights reserved.
+// Copyright (c) .NET Foundation. All rights reserved.
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
+
 
 using System;
 using System.IO;
-using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Features;
 using Microsoft.AspNetCore.Mvc.Core;
 using Microsoft.Extensions.FileProviders;
 using Microsoft.Extensions.Logging;
@@ -15,10 +14,18 @@ using Microsoft.Net.Http.Headers;
 
 namespace Microsoft.AspNetCore.Mvc.Infrastructure
 {
+    /// <summary>
+    /// A <see cref="IActionResultExecutor{VirtualFileResult}"/> for <see cref="VirtualFileResult"/>.
+    /// </summary>
     public class VirtualFileResultExecutor : FileResultExecutorBase, IActionResultExecutor<VirtualFileResult>
     {
         private readonly IWebHostEnvironment _hostingEnvironment;
 
+        /// <summary>
+        /// Initializes a new instance of <see cref="VirtualFileResultExecutor"/>.
+        /// </summary>
+        /// <param name="loggerFactory">The factory used to create loggers.</param>
+        /// <param name="hostingEnvironment">The hosting enviornment</param>
         public VirtualFileResultExecutor(ILoggerFactory loggerFactory, IWebHostEnvironment hostingEnvironment)
             : base(CreateLogger<VirtualFileResultExecutor>(loggerFactory))
         {
@@ -43,7 +50,7 @@ namespace Microsoft.AspNetCore.Mvc.Infrastructure
                 throw new ArgumentNullException(nameof(result));
             }
 
-            var fileInfo = GetFileInformation(result);
+            var fileInfo = GetFileInformation(result, _hostingEnvironment);
             if (!fileInfo.Exists)
             {
                 throw new FileNotFoundException(
@@ -69,7 +76,8 @@ namespace Microsoft.AspNetCore.Mvc.Infrastructure
             return Task.CompletedTask;
         }
 
-        protected virtual Task WriteFileAsync(ActionContext context, VirtualFileResult result, IFileInfo fileInfo, RangeItemHeaderValue range, long rangeLength)
+        /// <inheritdoc/>
+        protected virtual Task WriteFileAsync(ActionContext context, VirtualFileResult result, IFileInfo fileInfo, RangeItemHeaderValue? range, long rangeLength)
         {
             if (context == null)
             {
@@ -81,16 +89,26 @@ namespace Microsoft.AspNetCore.Mvc.Infrastructure
                 throw new ArgumentNullException(nameof(result));
             }
 
+            return WriteFileAsyncInternal(context.HttpContext, fileInfo, range, rangeLength, Logger);
+        }
+
+        internal static Task WriteFileAsyncInternal(
+            HttpContext httpContext,
+            IFileInfo fileInfo,
+            RangeItemHeaderValue? range,
+            long rangeLength,
+            ILogger logger)
+        {
             if (range != null && rangeLength == 0)
             {
                 return Task.CompletedTask;
             }
 
-            var response = context.HttpContext.Response;
+            var response = httpContext.Response;
 
             if (range != null)
             {
-                Logger.WritingRangeToBody();
+                logger.WritingRangeToBody();
             }
 
             if (range != null)
@@ -105,9 +123,9 @@ namespace Microsoft.AspNetCore.Mvc.Infrastructure
                 count: null);
         }
 
-        private IFileInfo GetFileInformation(VirtualFileResult result)
+        internal static IFileInfo GetFileInformation(VirtualFileResult result, IWebHostEnvironment hostingEnvironment)
         {
-            var fileProvider = GetFileProvider(result);
+            var fileProvider = GetFileProvider(result, hostingEnvironment);
             if (fileProvider is NullFileProvider)
             {
                 throw new InvalidOperationException(Resources.VirtualFileResultExecutor_NoFileProviderConfigured);
@@ -123,17 +141,22 @@ namespace Microsoft.AspNetCore.Mvc.Infrastructure
             return fileInfo;
         }
 
-        private IFileProvider GetFileProvider(VirtualFileResult result)
+        internal static IFileProvider GetFileProvider(VirtualFileResult result, IWebHostEnvironment hostingEnvironment)
         {
             if (result.FileProvider != null)
             {
                 return result.FileProvider;
             }
 
-            result.FileProvider = _hostingEnvironment.WebRootFileProvider;
+            result.FileProvider = hostingEnvironment.WebRootFileProvider;
             return result.FileProvider;
         }
 
+        /// <summary>
+        /// Obsolete, this API is no longer called.
+        /// </summary>
+        /// <param name="fileInfo"></param>
+        /// <returns></returns>
         [Obsolete("This API is no longer called.")]
         protected virtual Stream GetFileStream(IFileInfo fileInfo)
         {

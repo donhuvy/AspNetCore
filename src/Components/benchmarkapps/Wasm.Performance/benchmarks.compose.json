@@ -11,9 +11,12 @@
     "blazorwasmbenchmark": {
       "source": {
         "repository": "https://github.com/dotnet/AspNetCore.git",
-        "branchOrCommit": "blazor-wasm",
+        "branchOrCommit": "main",
         "dockerfile": "src/Components/benchmarkapps/Wasm.Performance/dockerfile"
       },
+      "buildArguments": [
+        "gitBranch=main"
+      ],
       "waitForExit": true,
       "readyStateText": "Application started."
     }

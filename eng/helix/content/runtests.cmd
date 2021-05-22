@@ -1,32 +1,42 @@
-@echo off
-REM Need delayed expansion !PATH! so parens in the path don't mess up the parens for the if statements that use parens for blocks
-setlocal enabledelayedexpansion
+@ECHO OFF
+SETLOCAL
 
 REM Use '$' as a variable name prefix to avoid MSBuild variable collisions with these variables
-set $sdkVersion=%2
-set $runtimeVersion=%3
-set $arch=%5
+set $target=%1
+set $aspRuntimeVersion=%2
+set $queue=%3
+set $arch=%4
+set $quarantined=%5
+set $ef=%6
+set $helixTimeout=%7
+set $installPlaywright=%8
+REM Batch only supports up to 9 arguments using the %# syntax, need to shift to get more
 
-set DOTNET_HOME=%HELIX_CORRELATION_PAYLOAD%\sdk
-set DOTNET_ROOT=%DOTNET_HOME%\%$arch%
 set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 set DOTNET_MULTILEVEL_LOOKUP=0
-set DOTNET_CLI_HOME=%HELIX_CORRELATION_PAYLOAD%\home
+set InstallPlaywright=%installPlaywright%
+set PLAYWRIGHT_BROWSERS_PATH=%CD%\ms-playwright
+set PLAYWRIGHT_DRIVER_PATH=%CD%\.playwright\win-x64\native\playwright.cmd
 
-set PATH=%DOTNET_ROOT%;!PATH!;%HELIX_CORRELATION_PAYLOAD%\node\bin
-echo Set path to: %PATH%
-echo "Installing SDK"
-powershell.exe -NoProfile -ExecutionPolicy unrestricted -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; &([scriptblock]::Create((Invoke-WebRequest -useb 'https://dot.net/v1/dotnet-install.ps1'))) -Architecture %$arch% -Version %$sdkVersion% -InstallDir %DOTNET_ROOT%"
-echo "Installing Runtime"
-powershell.exe -NoProfile -ExecutionPolicy unrestricted -Command "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; &([scriptblock]::Create((Invoke-WebRequest -useb 'https://dot.net/v1/dotnet-install.ps1'))) -Architecture %$arch% -Runtime dotnet -Version %$runtimeVersion% -InstallDir %DOTNET_ROOT%"
+set "PATH=%HELIX_WORKITEM_ROOT%;%PATH%;%HELIX_WORKITEM_ROOT%\node\bin"
+echo Set path to: "%PATH%"
+echo.
 
 set exit_code=0
-echo "Restore: dotnet restore RunTests\RunTests.csproj --source https://api.nuget.org/v3/index.json --ignore-failed-sources..."
-dotnet restore RunTests\RunTests.csproj --source https://api.nuget.org/v3/index.json --ignore-failed-sources
-echo "Running tests: dotnet run --project RunTests\RunTests.csproj -- --target %1 --sdk %2 --runtime %3 --queue %4 --arch %5 --quarantined %6 --ef %7 --aspnetruntime %8 --aspnetref %9..."
-dotnet run --project RunTests\RunTests.csproj -- --target %1 --sdk %2 --runtime %3 --queue %4 --arch %5 --quarantined %6 --ef %7 --aspnetruntime %8 --aspnetref %9
-if errorlevel 1 (
-    set exit_code=1
+
+echo "Restore: dotnet restore RunTests\RunTests.csproj --ignore-failed-sources"
+dotnet restore RunTests\RunTests.csproj --ignore-failed-sources
+
+if errorlevel neq 0 (
+    set exit_code=%errorlevel%
+    echo "Finished running tests: exit_code=%exit_code%"
+    EXIT /b %exit_code%
+)
+
+echo "Running tests: dotnet run --no-restore --project RunTests\RunTests.csproj -- --target %$target% --runtime %$aspRuntimeVersion% --queue %$queue% --arch %$arch% --quarantined %$quarantined% --ef %$ef% --helixTimeout %$helixTimeout%"
+dotnet run --no-restore --project RunTests\RunTests.csproj -- --target %$target% --runtime %$aspRuntimeVersion% --queue %$queue% --arch %$arch% --quarantined %$quarantined% --ef %$ef% --helixTimeout %$helixTimeout%
+if errorlevel neq 0 (
+    set exit_code=%errorlevel%
 )
 echo "Finished running tests: exit_code=%exit_code%"
-exit /b %exit_code%
+EXIT /b %exit_code%

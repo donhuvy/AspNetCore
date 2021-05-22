@@ -1,6 +1,5 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
-// See the LICENSE file in the project root for more information.
 
 #nullable enable
 using System.Buffers;
@@ -14,7 +13,7 @@ using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Http;
 
 namespace System.Net.Http.QPack
 {
-    internal class QPackDecoder : IDisposable
+    internal sealed class QPackDecoder : IDisposable
     {
         private enum State
         {
@@ -166,6 +165,15 @@ namespace System.Net.Http.QPack
                 Pool.Return(_headerValueOctets, true);
                 _headerValueOctets = null!;
             }
+        }
+
+        /// <summary>
+        /// Reset the decoder state back to its initial value. Resetting state is required when reusing a decoder with multiple
+        /// header frames. For example, decoding a response's headers and trailers.
+        /// </summary>
+        public void Reset()
+        {
+            _state = State.RequiredInsertCount;
         }
 
         public void Decode(in ReadOnlySequence<byte> headerBlock, IHttpHeadersHandler handler)
@@ -413,7 +421,7 @@ namespace System.Net.Http.QPack
 
             if (_index is int index)
             {
-                Debug.Assert(index >= 0 && index <= H3StaticTable.Instance.Count, $"The index should be a valid static index here. {nameof(QPackDecoder)} should have previously thrown if it read a dynamic index.");
+                Debug.Assert(index >= 0 && index <= H3StaticTable.Count, $"The index should be a valid static index here. {nameof(QPackDecoder)} should have previously thrown if it read a dynamic index.");
                 handler.OnStaticIndexedHeader(index, headerValueSpan);
                 _index = null;
 

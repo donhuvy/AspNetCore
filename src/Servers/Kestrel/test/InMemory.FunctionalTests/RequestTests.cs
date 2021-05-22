@@ -18,8 +18,6 @@ using Microsoft.AspNetCore.Server.Kestrel.Core.Internal.Infrastructure;
 using Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests.TestTransport;
 using Microsoft.AspNetCore.Testing;
 using Microsoft.Extensions.Logging;
-using Microsoft.Extensions.Logging.Testing;
-using Serilog;
 using Xunit;
 
 namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
@@ -84,8 +82,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         [Fact]
         public async Task RequestBodyReadAsyncCanBeCancelled()
         {
-            var helloTcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var readTcs = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var helloTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var readTcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var cts = new CancellationTokenSource();
 
             await using (var server = new TestServer(async context =>
@@ -97,7 +95,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
                     Assert.Equal("Hello ", Encoding.ASCII.GetString(buffer, 0, 6));
 
-                    helloTcs.TrySetResult(null);
+                    helloTcs.TrySetResult();
                 }
                 catch (Exception ex)
                 {
@@ -108,7 +106,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
                 try
                 {
                     var task = context.Request.Body.ReadAsync(buffer, 0, buffer.Length, cts.Token);
-                    readTcs.TrySetResult(null);
+                    readTcs.TrySetResult();
                     await task;
 
                     context.Response.ContentLength = 12;
@@ -849,6 +847,42 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         }
 
         [Fact]
+        public async Task Expect100ContinueHonoredWhenMinRequestBodyDataRateIsDisabled()
+        {
+            var testContext = new TestServiceContext(LoggerFactory);
+
+            // This may seem unrelated, but this is a regression test for
+            // https://github.com/dotnet/aspnetcore/issues/30449
+            testContext.ServerOptions.Limits.MinRequestBodyDataRate = null;
+
+            await using (var server = new TestServer(TestApp.EchoAppChunked, testContext))
+            {
+                using (var connection = server.CreateConnection())
+                {
+                    await connection.Send(
+                        "POST / HTTP/1.1",
+                        "Host:",
+                        "Expect: 100-continue",
+                        "Connection: close",
+                        "Content-Length: 11",
+                        "\r\n");
+                    await connection.Receive(
+                        "HTTP/1.1 100 Continue",
+                        "",
+                        "");
+                    await connection.Send("Hello World");
+                    await connection.ReceiveEnd(
+                        "HTTP/1.1 200 OK",
+                        "Connection: close",
+                        $"Date: {testContext.DateHeaderValue}",
+                        "Content-Length: 11",
+                        "",
+                        "Hello World");
+                }
+            }
+        }
+
+        [Fact]
         public async Task ZeroContentLengthAssumedOnNonKeepAliveRequestsWithoutContentLengthOrTransferEncodingHeader()
         {
             var testContext = new TestServiceContext(LoggerFactory);
@@ -1048,27 +1082,52 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         }
 
         [Fact]
-        [QuarantinedTest]
         public async Task ContentLengthReadAsyncSingleBytesAtATime()
         {
             var testContext = new TestServiceContext(LoggerFactory);
-            var tcs = new TaskCompletionSource<object>();
-            var tcs2 = new TaskCompletionSource<object>();
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var tcs2 = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+            static async Task<ReadResult> ReadAtLeastAsync(PipeReader reader, int numBytes)
+            {
+                var result = await reader.ReadAsync();
+
+                while (!result.IsCompleted && result.Buffer.Length < numBytes)
+                {
+                    reader.AdvanceTo(result.Buffer.Start, result.Buffer.End);
+                    result = await reader.ReadAsync();
+                }
+
+                if (result.Buffer.Length < numBytes)
+                {
+                    throw new IOException("Unexpected end of content.");
+                }
+
+                return result;
+            }
+
             await using (var server = new TestServer(async httpContext =>
             {
-                var readResult = await httpContext.Request.BodyReader.ReadAsync();
+                // Buffer 3 bytes.
+                var readResult = await ReadAtLeastAsync(httpContext.Request.BodyReader, numBytes: 3);
                 Assert.Equal(3, readResult.Buffer.Length);
-                tcs.SetResult(null);
+                tcs.SetResult();
 
                 httpContext.Request.BodyReader.AdvanceTo(readResult.Buffer.Start, readResult.Buffer.End);
 
+                // Buffer 1 more byte.
                 readResult = await httpContext.Request.BodyReader.ReadAsync();
                 httpContext.Request.BodyReader.AdvanceTo(readResult.Buffer.Start, readResult.Buffer.End);
-                tcs2.SetResult(null);
+                tcs2.SetResult();
 
+                // Buffer 1 last byte.
                 readResult = await httpContext.Request.BodyReader.ReadAsync();
                 Assert.Equal(5, readResult.Buffer.Length);
 
+                // Do one more read to ensure completion is always observed.
+                httpContext.Request.BodyReader.AdvanceTo(readResult.Buffer.Start, readResult.Buffer.End);
+                readResult = await httpContext.Request.BodyReader.ReadAsync();
+                Assert.True(readResult.IsCompleted);
             }, testContext))
             {
                 using (var connection = server.CreateConnection())
@@ -1494,8 +1553,8 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         [Fact]
         public async Task DoesNotEnforceRequestBodyMinimumDataRateOnUpgradedRequest()
         {
-            var appEvent = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
-            var delayEvent = new TaskCompletionSource<object>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var appEvent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var delayEvent = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var serviceContext = new TestServiceContext(LoggerFactory);
             var heartbeatManager = new HeartbeatManager(serviceContext.ConnectionManager);
 
@@ -1506,7 +1565,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
                 using (var stream = await context.Features.Get<IHttpUpgradeFeature>().UpgradeAsync())
                 {
-                    appEvent.SetResult(null);
+                    appEvent.SetResult();
 
                     // Read once to go through one set of TryPauseTimingReads()/TryResumeTimingReads() calls
                     await stream.ReadAsync(new byte[1], 0, 1);
@@ -1536,7 +1595,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
                     serviceContext.MockSystemClock.UtcNow += TimeSpan.FromSeconds(5);
                     heartbeatManager.OnHeartbeat(serviceContext.SystemClock.UtcNow);
 
-                    delayEvent.SetResult(null);
+                    delayEvent.SetResult();
 
                     await connection.Send("b");
 
@@ -1760,13 +1819,13 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
                 }
             }
 
-            Assert.Empty(TestApplicationErrorLogger.Messages.Where(m => m.LogLevel >= LogLevel.Warning));
+            Assert.Empty(LogMessages.Where(m => m.LogLevel >= LogLevel.Warning));
         }
 
         [Fact]
         public async Task ContentLengthRequestCallCancelPendingReadWorks()
         {
-            var tcs = new TaskCompletionSource<object>();
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var testContext = new TestServiceContext(LoggerFactory);
 
             await using (var server = new TestServer(async httpContext =>
@@ -1785,7 +1844,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
                 Assert.True((await requestTask).IsCanceled);
 
-                tcs.SetResult(null);
+                tcs.SetResult();
 
                 response.Headers["Content-Length"] = new[] { "11" };
 
@@ -1863,7 +1922,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         {
             var testContext = new TestServiceContext(LoggerFactory);
 
-            var tcs = new TaskCompletionSource<object>();
+            var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             await using (var server = new TestServer(async httpContext =>
             {
                 var request = httpContext.Request;
@@ -1873,7 +1932,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
 
                 httpContext.Request.BodyReader.Complete();
 
-                tcs.SetResult(null);
+                tcs.SetResult();
 
             }, testContext))
             {
@@ -1902,7 +1961,6 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         [Fact]
         public async Task ContentLengthCallCompleteWithExceptionCauses500()
         {
-            var tcs = new TaskCompletionSource<object>();
             var testContext = new TestServiceContext(LoggerFactory);
 
             await using (var server = new TestServer(async httpContext =>
@@ -1911,7 +1969,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
                 var request = httpContext.Request;
 
                 Assert.Equal("POST", request.Method);
-
+                Assert.True(request.CanHaveBody());
                 var readResult = await request.BodyReader.ReadAsync();
                 request.BodyReader.AdvanceTo(readResult.Buffer.End);
 
@@ -2002,7 +2060,7 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
         {
             var testContext = new TestServiceContext(LoggerFactory);
 
-            testContext.ServerOptions.Latin1RequestHeaders = true;
+            testContext.ServerOptions.RequestHeaderEncodingSelector = _ => Encoding.Latin1;
 
             await using (var server = new TestServer(context =>
             {
@@ -2052,6 +2110,42 @@ namespace Microsoft.AspNetCore.Server.Kestrel.InMemory.FunctionalTests
                     await connection.ReceiveEnd(
                         "HTTP/1.1 400 Bad Request",
                         "Connection: close",
+                        $"Date: {testContext.DateHeaderValue}",
+                        "Content-Length: 0",
+                        "",
+                        "");
+                }
+            }
+        }
+
+        [Fact]
+        public async Task CustomRequestHeaderEncodingSelectorCanBeConfigured()
+        {
+            var testContext = new TestServiceContext(LoggerFactory);
+
+            testContext.ServerOptions.RequestHeaderEncodingSelector = _ => Encoding.UTF32;
+
+            await using (var server = new TestServer(context =>
+            {
+                Assert.Equal("£", context.Request.Headers["X-Test"]);
+                return Task.CompletedTask;
+            }, testContext))
+            {
+                using (var connection = server.CreateConnection())
+                {
+                    await connection.Send(
+                        "GET / HTTP/1.1",
+                        "Host:",
+                        "X-Test: ");
+
+                    await connection.Stream.WriteAsync(Encoding.UTF32.GetBytes("£")).DefaultTimeout();
+
+                    await connection.Send("",
+                        "",
+                        "");
+
+                    await connection.Receive(
+                        "HTTP/1.1 200 OK",
                         $"Date: {testContext.DateHeaderValue}",
                         "Content-Length: 0",
                         "",

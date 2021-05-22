@@ -13,7 +13,6 @@ import { JsonHubProtocol } from "./JsonHubProtocol";
 import { NullLogger } from "./Loggers";
 import { Arg, ConsoleLogger } from "./Utils";
 
-// tslint:disable:object-literal-sort-keys
 const LogLevelNameMapping = {
     trace: LogLevel.Trace,
     debug: LogLevel.Debug,
@@ -122,6 +121,7 @@ export class HubConnectionBuilder {
     public withUrl(url: string, options: IHttpConnectionOptions): HubConnectionBuilder;
     public withUrl(url: string, transportTypeOrOptions?: IHttpConnectionOptions | HttpTransportType): HubConnectionBuilder {
         Arg.isRequired(url, "url");
+        Arg.isNotEmpty(url, "url");
 
         this.url = url;
 

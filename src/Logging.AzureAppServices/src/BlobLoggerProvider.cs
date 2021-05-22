@@ -5,6 +5,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -20,8 +21,7 @@ namespace Microsoft.Extensions.Logging.AzureAppServices
     [ProviderAlias("AzureAppServicesBlob")]
     public class BlobLoggerProvider : BatchingLoggerProvider
     {
-        private readonly string _appName;
-        private readonly string _fileName;
+        private readonly IOptionsMonitor<AzureBlobLoggerOptions> _options;
         private readonly Func<string, ICloudAppendBlob> _blobReferenceFactory;
         private readonly HttpClient _httpClient;
 
@@ -29,6 +29,7 @@ namespace Microsoft.Extensions.Logging.AzureAppServices
         /// Creates a new instance of <see cref="BlobLoggerProvider"/>
         /// </summary>
         /// <param name="options">The options to use when creating a provider.</param>
+        [SuppressMessage("ApiDesign", "RS0022:Constructor make noninheritable base class inheritable", Justification = "Required for backwards compatibility")]
         public BlobLoggerProvider(IOptionsMonitor<AzureBlobLoggerOptions> options)
             : this(options, null)
         {
@@ -48,9 +49,7 @@ namespace Microsoft.Extensions.Logging.AzureAppServices
             Func<string, ICloudAppendBlob> blobReferenceFactory) :
             base(options)
         {
-            var value = options.CurrentValue;
-            _appName = value.ApplicationName;
-            _fileName = value.ApplicationInstanceId + "_" + value.BlobName;
+            _options = options;
             _blobReferenceFactory = blobReferenceFactory;
             _httpClient = new HttpClient();
         }
@@ -58,10 +57,16 @@ namespace Microsoft.Extensions.Logging.AzureAppServices
         internal override async Task WriteMessagesAsync(IEnumerable<LogMessage> messages, CancellationToken cancellationToken)
         {
             var eventGroups = messages.GroupBy(GetBlobKey);
+            var options = _options.CurrentValue;
+            var identifier = options.ApplicationInstanceId + "_" + options.BlobName;
+
             foreach (var eventGroup in eventGroups)
             {
                 var key = eventGroup.Key;
-                var blobName = $"{_appName}/{key.Year}/{key.Month:00}/{key.Day:00}/{key.Hour:00}/{_fileName}";
+                string blobName = options.FileNameFormat(new AzureBlobLoggerContext(
+                    options.ApplicationName,
+                    identifier,
+                    new DateTimeOffset(key.Year, key.Month, key.Day, key.Hour, 0, 0, TimeSpan.Zero)));
 
                 var blob = _blobReferenceFactory(blobName);
 
@@ -75,7 +80,7 @@ namespace Microsoft.Extensions.Logging.AzureAppServices
 
                     await writer.FlushAsync();
                     var tryGetBuffer = stream.TryGetBuffer(out var buffer);
-                    Debug.Assert(tryGetBuffer);
+                    System.Diagnostics.Debug.Assert(tryGetBuffer);
                     await blob.AppendAsync(buffer, cancellationToken);
                 }
             }

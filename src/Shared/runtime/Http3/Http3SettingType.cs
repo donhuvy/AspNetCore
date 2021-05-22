@@ -1,6 +1,5 @@
 // Licensed to the .NET Foundation under one or more agreements.
 // The .NET Foundation licenses this file to you under the MIT license.
-// See the LICENSE file in the project root for more information.
 
 namespace System.Net.Http
 {
@@ -12,6 +11,15 @@ namespace System.Net.Http
         /// https://tools.ietf.org/html/draft-ietf-quic-qpack-11#section-5
         /// </summary>
         QPackMaxTableCapacity = 0x1,
+
+        // Below are explicitly reserved and should never be sent, per
+        // https://tools.ietf.org/html/draft-ietf-quic-http-31#section-7.2.4.1
+        // and
+        // https://tools.ietf.org/html/draft-ietf-quic-http-31#section-11.2.2
+        ReservedHttp2EnablePush = 0x2,
+        ReservedHttp2MaxConcurrentStreams = 0x3,
+        ReservedHttp2InitialWindowSize = 0x4,
+        ReservedHttp2MaxFrameSize = 0x5,
 
         /// <summary>
         /// SETTINGS_MAX_HEADER_LIST_SIZE

@@ -2,6 +2,7 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using Microsoft.AspNetCore.Components.Rendering;
 
@@ -11,9 +12,9 @@ namespace Microsoft.AspNetCore.Components.Forms
     /// An input component for editing numeric values.
     /// Supported numeric types are <see cref="int"/>, <see cref="long"/>, <see cref="short"/>, <see cref="float"/>, <see cref="double"/>, <see cref="decimal"/>.
     /// </summary>
-    public class InputNumber<TValue> : InputBase<TValue>
+    public class InputNumber<[DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.All)] TValue> : InputBase<TValue>
     {
-        private static string _stepAttributeValue; // Null by default, so only allows whole numbers as per HTML spec
+        private readonly static string _stepAttributeValue; // Null by default, so only allows whole numbers as per HTML spec
 
         static InputNumber()
         {
@@ -40,6 +41,14 @@ namespace Microsoft.AspNetCore.Components.Forms
         /// </summary>
         [Parameter] public string ParsingErrorMessage { get; set; } = "The {0} field must be a number.";
 
+        /// <summary>
+        /// Gets or sets the associated <see cref="ElementReference"/>.
+        /// <para>
+        /// May be <see langword="null"/> if accessed before the component is rendered.
+        /// </para>
+        /// </summary>
+        [DisallowNull] public ElementReference? Element { get; protected set; }
+
         /// <inheritdoc />
         protected override void BuildRenderTree(RenderTreeBuilder builder)
         {
@@ -49,12 +58,13 @@ namespace Microsoft.AspNetCore.Components.Forms
             builder.AddAttribute(3, "type", "number");
             builder.AddAttribute(4, "class", CssClass);
             builder.AddAttribute(5, "value", BindConverter.FormatValue(CurrentValueAsString));
-            builder.AddAttribute(6, "onchange", EventCallback.Factory.CreateBinder<string>(this, __value => CurrentValueAsString = __value, CurrentValueAsString));
+            builder.AddAttribute(6, "onchange", EventCallback.Factory.CreateBinder<string?>(this, __value => CurrentValueAsString = __value, CurrentValueAsString));
+            builder.AddElementReferenceCapture(7, __inputReference => Element = __inputReference);
             builder.CloseElement();
         }
 
         /// <inheritdoc />
-        protected override bool TryParseValueFromString(string value, out TValue result, out string validationErrorMessage)
+        protected override bool TryParseValueFromString(string? value, [MaybeNullWhen(false)] out TValue result, [NotNullWhen(false)] out string? validationErrorMessage)
         {
             if (BindConverter.TryConvertTo<TValue>(value, CultureInfo.InvariantCulture, out result))
             {
@@ -63,7 +73,7 @@ namespace Microsoft.AspNetCore.Components.Forms
             }
             else
             {
-                validationErrorMessage = string.Format(ParsingErrorMessage, FieldIdentifier.FieldName);
+                validationErrorMessage = string.Format(CultureInfo.InvariantCulture, ParsingErrorMessage, DisplayName ?? FieldIdentifier.FieldName);
                 return false;
             }
         }
@@ -73,7 +83,7 @@ namespace Microsoft.AspNetCore.Components.Forms
         /// </summary>
         /// <param name="value">The value to format.</param>
         /// <returns>A string representation of the value.</returns>
-        protected override string FormatValueAsString(TValue value)
+        protected override string? FormatValueAsString(TValue? value)
         {
             // Avoiding a cast to IFormattable to avoid boxing.
             switch (value)

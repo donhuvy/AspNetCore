@@ -2,9 +2,11 @@
 // Licensed under the Apache License, Version 2.0. See License.txt in the project root for license information.
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Text;
 using System.Threading.Tasks;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Http.Features;
@@ -18,8 +20,298 @@ using Xunit;
 
 namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
 {
-    public class Http2Tests
+    public class Http2Tests : LoggedTest
     {
+        private const string VersionForReset = "10.0.19529";
+
+        [ConditionalFact]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task EmptyResponse_200()
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                var feature = httpContext.Features.Get<IHttpUpgradeFeature>();
+                Assert.False(feature.IsUpgradableRequest);
+                Assert.False(httpContext.Request.CanHaveBody());
+                // Default 200
+                return Task.CompletedTask;
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    await h2Connection.StartStreamAsync(1, Http2Utilities.BrowserRequestHeaders, endStream: true);
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
+        [ConditionalTheory]
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task RequestWithoutData_LengthRequired_Rejected(string method)
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                throw new NotImplementedException();
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>(HeaderNames.Method, method),
+                        new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                        new KeyValuePair<string, string>(HeaderNames.Scheme, "https"),
+                        new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+                    };
+
+                    await h2Connection.StartStreamAsync(1, headers, endStream: true);
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("411", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: false, length: 344);
+                    dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
+        [ConditionalTheory]
+        [InlineData("GET")]
+        [InlineData("HEAD")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task RequestWithoutData_Success(string method)
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                Assert.True(HttpMethods.Equals(method, httpContext.Request.Method));
+                Assert.False(httpContext.Request.CanHaveBody());
+                Assert.Null(httpContext.Request.ContentLength);
+                Assert.False(httpContext.Request.Headers.ContainsKey(HeaderNames.TransferEncoding));
+                return Task.CompletedTask;
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>(HeaderNames.Method, method),
+                        new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                        new KeyValuePair<string, string>(HeaderNames.Scheme, "https"),
+                        new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+                    };
+
+                    await h2Connection.StartStreamAsync(1, headers, endStream: true);
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
+        [ConditionalTheory]
+        [InlineData("GET")]
+        // [InlineData("HEAD")] Reset with code HTTP_1_1_REQUIRED
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task RequestWithDataAndContentLength_Success(string method)
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                Assert.True(HttpMethods.Equals(method, httpContext.Request.Method));
+                Assert.True(httpContext.Request.CanHaveBody());
+                Assert.Equal(11, httpContext.Request.ContentLength);
+                Assert.False(httpContext.Request.Headers.ContainsKey(HeaderNames.TransferEncoding));
+                return httpContext.Request.Body.CopyToAsync(httpContext.Response.Body);
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>(HeaderNames.Method, method),
+                        new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                        new KeyValuePair<string, string>(HeaderNames.Scheme, "https"),
+                        new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+                        new KeyValuePair<string, string>(HeaderNames.ContentLength, "11"),
+                    };
+
+                    await h2Connection.StartStreamAsync(1, headers, endStream: false);
+
+                    await h2Connection.SendDataAsync(1, Encoding.UTF8.GetBytes("Hello World"), endStream: true);
+
+                    // Http.Sys no longer sends a window update here on later versions.
+                    if (Environment.OSVersion.Version < new Version(10, 0, 19041, 0))
+                    {
+                        var windowUpdate = await h2Connection.ReceiveFrameAsync();
+                        Assert.Equal(Http2FrameType.WINDOW_UPDATE, windowUpdate.Type);
+                    }
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: false, length: 11);
+                    Assert.Equal("Hello World", Encoding.UTF8.GetString(dataFrame.Payload.Span));
+
+                    dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
+        [ConditionalTheory]
+        [InlineData("GET")]
+        // [InlineData("HEAD")] Reset with code HTTP_1_1_REQUIRED
+        [InlineData("POST")]
+        [InlineData("PUT")]
+        [InlineData("PATCH")]
+        [InlineData("DELETE")]
+        [InlineData("CUSTOM")]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task RequestWithDataAndNoContentLength_Success(string method)
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                Assert.True(HttpMethods.Equals(method, httpContext.Request.Method));
+                Assert.True(httpContext.Request.CanHaveBody());
+                Assert.Null(httpContext.Request.ContentLength);
+                // The client didn't send this header, Http.Sys added it for back compat with HTTP/1.1.
+                Assert.Equal("chunked", httpContext.Request.Headers.TransferEncoding);
+                return httpContext.Request.Body.CopyToAsync(httpContext.Response.Body);
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    var headers = new[]
+                    {
+                        new KeyValuePair<string, string>(HeaderNames.Method, method),
+                        new KeyValuePair<string, string>(HeaderNames.Path, "/"),
+                        new KeyValuePair<string, string>(HeaderNames.Scheme, "https"),
+                        new KeyValuePair<string, string>(HeaderNames.Authority, "localhost:80"),
+                    };
+
+                    await h2Connection.StartStreamAsync(1, headers, endStream: false);
+
+                    await h2Connection.SendDataAsync(1, Encoding.UTF8.GetBytes("Hello World"), endStream: true);
+
+                    // Http.Sys no longer sends a window update here on later versions.
+                    if (Environment.OSVersion.Version < new Version(10, 0, 19041, 0))
+                    {
+                        var windowUpdate = await h2Connection.ReceiveFrameAsync();
+                        Assert.Equal(Http2FrameType.WINDOW_UPDATE, windowUpdate.Type);
+                    }
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: false, length: 11);
+                    Assert.Equal("Hello World", Encoding.UTF8.GetString(dataFrame.Payload.Span));
+
+                    dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
+        [ConditionalFact]
+        [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
+        public async Task ResponseWithData_Success()
+        {
+            using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
+            {
+                return httpContext.Response.WriteAsync("Hello World");
+            });
+
+            await new HostBuilder()
+                .UseHttp2Cat(address, async h2Connection =>
+                {
+                    await h2Connection.InitializeConnectionAsync();
+
+                    h2Connection.Logger.LogInformation("Initialized http2 connection. Starting stream 1.");
+
+                    await h2Connection.StartStreamAsync(1, Http2Utilities.BrowserRequestHeaders, endStream: true);
+
+                    await h2Connection.ReceiveHeadersAsync(1, decodedHeaders =>
+                    {
+                        Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
+                    });
+
+                    var dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: false, length: 11);
+
+                    dataFrame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyDataFrame(dataFrame, 1, endOfStream: true, length: 0);
+
+                    h2Connection.Logger.LogInformation("Connection stopped.");
+                })
+                .Build().RunAsync();
+        }
+
         [ConditionalFact(Skip = "https://github.com/dotnet/aspnetcore/issues/17420")]
         [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
         [MaximumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10_19H1, SkipReason = "This is last version without GoAway support")]
@@ -27,7 +319,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
             {
-                httpContext.Response.Headers[HeaderNames.Connection] = "close";
+                httpContext.Response.Headers.Connection = "close";
                 return Task.FromResult(0);
             });
 
@@ -71,7 +363,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
             {
-                httpContext.Response.Headers[HeaderNames.Connection] = "close";
+                httpContext.Response.Headers.Connection = "close";
                 return Task.FromResult(0);
             });
 
@@ -110,7 +402,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
             {
-                httpContext.Response.Headers[HeaderNames.Connection] = "close";
+                httpContext.Response.Headers.Connection = "close";
                 return Task.FromResult(0);
             });
 
@@ -180,7 +472,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
 
         [ConditionalFact]
         [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
-        public async Task AppException_BeforeHeaders_500()
+        public async Task AppException_BeforeResponseHeaders_500()
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
             {
@@ -243,7 +535,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Custom Reset support was added in Win10_20H2.")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task AppException_AfterHeaders_ResetInternalError()
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, async httpContext =>
@@ -266,8 +558,8 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
                         Assert.Equal("200", decodedHeaders[HeaderNames.Status]);
                     });
 
-                    var resetFrame = await h2Connection.ReceiveFrameAsync();
-                    Http2Utilities.VerifyResetFrame(resetFrame, expectedStreamId: 1, Http2ErrorCode.INTERNAL_ERROR);
+                    var frame = await h2Connection.ReceiveFrameAsync();
+                    Http2Utilities.VerifyResetFrame(frame, expectedStreamId: 1, Http2ErrorCode.INTERNAL_ERROR);
 
                     h2Connection.Logger.LogInformation("Connection stopped.");
                 })
@@ -283,7 +575,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
                 var feature = httpContext.Features.Get<IHttpResetFeature>();
                 Assert.Null(feature);
                 return httpContext.Response.WriteAsync("Hello World");
-            });
+            }, LoggerFactory);
 
             var handler = new HttpClientHandler();
             handler.ServerCertificateCustomValidationCallback = HttpClientHandler.DangerousAcceptAnyServerCertificateValidator;
@@ -295,7 +587,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
 
         [ConditionalFact]
         [MinimumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10, SkipReason = "Http2 requires Win10")]
-        [MaximumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10_20H1, SkipReason = "This is last version without Reset support")]
+        [MaximumOSVersion(OperatingSystems.Windows, WindowsVersions.Win10_20H2, SkipReason = "This is last version without Reset support")]
         public async Task Reset_PriorOSVersions_NotSupported()
         {
             using var server = Utilities.CreateDynamicHttpsServer(out var address, httpContext =>
@@ -315,7 +607,8 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [QuarantinedTest("https://github.com/dotnet/aspnetcore/issues/29126")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_BeforeResponse_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -334,7 +627,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
                     appResult.SetException(ex);
                 }
                 return Task.FromResult(0);
-            });
+            }, LoggerFactory);
 
             await new HostBuilder()
                 .UseHttp2Cat(address, async h2Connection =>
@@ -357,7 +650,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_AfterResponseHeaders_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -404,7 +697,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_DurringResponseBody_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -454,7 +747,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_AfterCompleteAsync_NoReset()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -506,7 +799,8 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [QuarantinedTest("https://github.com/dotnet/aspnetcore/issues/29126")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_BeforeRequestBody_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -552,7 +846,8 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [QuarantinedTest("https://github.com/dotnet/aspnetcore/issues/29126")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_DurringRequestBody_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -601,7 +896,7 @@ namespace Microsoft.AspNetCore.Server.HttpSys.FunctionalTests
         }
 
         [ConditionalFact]
-        [MinimumOSVersion(OperatingSystems.Windows, "10.0.19529", SkipReason = "Reset support was added in Win10_20H2.")]
+        [MinimumOSVersion(OperatingSystems.Windows, VersionForReset)]
         public async Task Reset_CompleteAsyncDurringRequestBody_Resets()
         {
             var appResult = new TaskCompletionSource<int>(TaskCreationOptions.RunContinuationsAsynchronously);

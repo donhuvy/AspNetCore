@@ -40,7 +40,6 @@ namespace Microsoft.AspNetCore.Identity.Test
 
         [Theory]
         [MemberData(nameof(ScriptWithIntegrityData))]
-        [QuarantinedTest]
         public async Task IdentityUI_ScriptTags_SubresourceIntegrityCheck(ScriptTag scriptTag)
         {
             var integrity = await GetShaIntegrity(scriptTag);
@@ -49,7 +48,7 @@ namespace Microsoft.AspNetCore.Identity.Test
 
         private async Task<string> GetShaIntegrity(ScriptTag scriptTag)
         {
-            var isSha256 = scriptTag.Integrity.StartsWith("sha256");
+            var isSha256 = scriptTag.Integrity.StartsWith("sha256", StringComparison.Ordinal);
             var prefix = isSha256 ? "sha256" : "sha384";
             using (var respStream = await _httpClient.GetStreamAsync(scriptTag.Src))
             using (var alg256 = SHA256.Create())
@@ -80,7 +79,6 @@ namespace Microsoft.AspNetCore.Identity.Test
 
         [Theory]
         [MemberData(nameof(ScriptWithFallbackSrcData))]
-        [QuarantinedTest("https://github.com/dotnet/aspnetcore-internal/issues/2267")]
         public async Task IdentityUI_ScriptTags_FallbackSourceContent_Matches_CDNContent(ScriptTag scriptTag)
         {
             var wwwrootDir = Path.Combine(GetProjectBasePath(), "wwwroot", scriptTag.Version);
@@ -108,9 +106,8 @@ namespace Microsoft.AspNetCore.Identity.Test
 
         private static List<ScriptTag> GetScriptTags()
         {
-            var uiDirV3 = Path.Combine(GetProjectBasePath(), "Areas", "Identity", "Pages", "V3");
             var uiDirV4 = Path.Combine(GetProjectBasePath(), "Areas", "Identity", "Pages", "V4");
-            var cshtmlFiles = GetRazorFiles(uiDirV3).Concat(GetRazorFiles(uiDirV4));
+            var cshtmlFiles = GetRazorFiles(uiDirV4);
 
             var scriptTags = new List<ScriptTag>();
             foreach (var cshtmlFile in cshtmlFiles)
@@ -143,7 +140,7 @@ namespace Microsoft.AspNetCore.Identity.Test
 
                 scriptTags.Add(new ScriptTag
                 {
-                    Version = cshtmlFile.Contains("V3") ? "V3" : "V4",
+                    Version = "V4",
                     Src = scriptElement.Source,
                     Integrity = scriptElement.Integrity,
                     FallbackSrc = fallbackSrcAttribute?.Value,

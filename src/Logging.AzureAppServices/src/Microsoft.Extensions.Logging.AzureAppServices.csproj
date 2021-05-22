@@ -2,10 +2,10 @@
 
   <PropertyGroup>
     <Description>Logger implementation to support Azure App Services 'Diagnostics logs' and 'Log stream' features.</Description>
-    <TargetFramework>netstandard2.0</TargetFramework>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
-    <IsPackable>true</IsPackable>
+    <TargetFrameworks>$(DefaultNetCoreTargetFramework);$(DefaultNetFxTargetFramework);netstandard2.0</TargetFrameworks>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <IsShipping>true</IsShipping>
+    <Nullable>disable</Nullable>
   </PropertyGroup>
 
   <ItemGroup>
@@ -19,6 +19,10 @@
     <Reference Include="Microsoft.Extensions.Logging.Configuration" />
     <Reference Include="Microsoft.Extensions.Logging" />
     <Reference Include="System.ValueTuple" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(TargetFramework)' == '$(DefaultNetFxTargetFramework)' OR '$(MSBuildRestoreSessionId)' == ''">
+    <Reference Include="System.Net.Http" />
   </ItemGroup>
 
 </Project>

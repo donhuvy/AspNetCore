@@ -36,14 +36,14 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [Fact]
         public async Task CanStartAndStopConnectionUsingDefaultTransport()
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var url = server.Url + "/echo";
                 // The test should connect to the server using WebSockets transport on Windows 8 and newer.
                 // On Windows 7/2008R2 it should use ServerSentEvents transport to connect to the server.
                 var connection = new HttpConnection(new Uri(url), HttpTransports.All, LoggerFactory);
-                await connection.StartAsync().OrTimeout();
-                await connection.DisposeAsync().OrTimeout();
+                await connection.StartAsync().DefaultTimeout();
+                await connection.DisposeAsync().DefaultTimeout();
             }
         }
 
@@ -56,7 +56,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorStartingTransport";
             }
 
-            using (var server = await StartServer<Startup>(expectedErrorsFilter: ExpectedErrors))
+            await using (var server = await StartServer<Startup>(expectedErrorsFilter: ExpectedErrors))
             {
                 var url = server.Url + "/echo";
                 // The test should connect to the server using WebSockets transport on Windows 8 and newer.
@@ -64,8 +64,8 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                 // The test logic lives in the TestTransportFactory and FakeTransport.
                 var connection = new HttpConnection(new HttpConnectionOptions { Url = new Uri(url), DefaultTransferFormat = TransferFormat.Text }, LoggerFactory, new TestTransportFactory());
-                await connection.StartAsync().OrTimeout();
-                await connection.DisposeAsync().OrTimeout();
+                await connection.StartAsync().DefaultTimeout();
+                await connection.DisposeAsync().DefaultTimeout();
             }
         }
 
@@ -74,12 +74,12 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [LogLevel(LogLevel.Trace)]
         public async Task CanStartAndStopConnectionUsingGivenTransport(HttpTransportType transportType)
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var url = server.Url + "/echo";
                 var connection = new HttpConnection(new HttpConnectionOptions { Url = new Uri(url), Transports = transportType, DefaultTransferFormat = TransferFormat.Text }, LoggerFactory);
-                await connection.StartAsync().OrTimeout();
-                await connection.DisposeAsync().OrTimeout();
+                await connection.StartAsync().DefaultTimeout();
+                await connection.DisposeAsync().DefaultTimeout();
             }
         }
 
@@ -87,7 +87,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [WebSocketsSupportedCondition]
         public async Task WebSocketsTest()
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -97,23 +97,23 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                     var socketUrl = server.WebSocketsUrl + "/echo";
 
                     logger.LogInformation("Connecting WebSocket to {socketUrl}", socketUrl);
-                    await ws.ConnectAsync(new Uri(socketUrl), CancellationToken.None).OrTimeout();
+                    await ws.ConnectAsync(new Uri(socketUrl), CancellationToken.None).DefaultTimeout();
 
                     var bytes = Encoding.UTF8.GetBytes(message);
                     logger.LogInformation("Sending {length} byte frame", bytes.Length);
-                    await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None).OrTimeout();
+                    await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None).DefaultTimeout();
 
                     logger.LogInformation("Receiving frame");
                     var buffer = new ArraySegment<byte>(new byte[1024]);
-                    var result = await ws.ReceiveAsync(buffer, CancellationToken.None).OrTimeout();
+                    var result = await ws.ReceiveAsync(buffer, CancellationToken.None).DefaultTimeout();
                     logger.LogInformation("Received {length} byte frame", result.Count);
 
                     Assert.Equal(bytes, buffer.Array.AsSpan(0, result.Count).ToArray());
 
                     logger.LogInformation("Closing socket");
-                    await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None).OrTimeout();
+                    await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None).DefaultTimeout();
                     logger.LogInformation("Waiting for close");
-                    result = await ws.ReceiveAsync(buffer, CancellationToken.None).OrTimeout();
+                    result = await ws.ReceiveAsync(buffer, CancellationToken.None).DefaultTimeout();
                     Assert.Equal(WebSocketMessageType.Close, result.MessageType);
                     Assert.Equal(WebSocketCloseStatus.NormalClosure, result.CloseStatus);
                     logger.LogInformation("Closed socket");
@@ -125,7 +125,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [WebSocketsSupportedCondition]
         public async Task WebSocketsReceivesAndSendsPartialFramesTest()
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -135,24 +135,24 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                     var socketUrl = server.WebSocketsUrl + "/echo";
 
                     logger.LogInformation("Connecting WebSocket to {socketUrl}", socketUrl);
-                    await ws.ConnectAsync(new Uri(socketUrl), CancellationToken.None).OrTimeout();
+                    await ws.ConnectAsync(new Uri(socketUrl), CancellationToken.None).DefaultTimeout();
 
                     var bytes = Encoding.UTF8.GetBytes(message);
                     logger.LogInformation("Sending {length} byte frame", bytes.Length);
                     // We're sending a partial frame, we should still get the data
-                    await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, endOfMessage: false, CancellationToken.None).OrTimeout();
+                    await ws.SendAsync(new ArraySegment<byte>(bytes), WebSocketMessageType.Binary, endOfMessage: false, CancellationToken.None).DefaultTimeout();
 
                     logger.LogInformation("Receiving frame");
                     var buffer = new ArraySegment<byte>(new byte[1024]);
-                    var result = await ws.ReceiveAsync(buffer, CancellationToken.None).OrTimeout();
+                    var result = await ws.ReceiveAsync(buffer, CancellationToken.None).DefaultTimeout();
                     logger.LogInformation("Received {length} byte frame", result.Count);
 
                     Assert.Equal(bytes, buffer.Array.AsSpan(0, result.Count).ToArray());
 
                     logger.LogInformation("Closing socket");
-                    await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None).OrTimeout();
+                    await ws.CloseOutputAsync(WebSocketCloseStatus.NormalClosure, "", CancellationToken.None).DefaultTimeout();
                     logger.LogInformation("Waiting for close");
-                    result = await ws.ReceiveAsync(buffer, CancellationToken.None).OrTimeout();
+                    result = await ws.ReceiveAsync(buffer, CancellationToken.None).DefaultTimeout();
                     Assert.Equal(WebSocketMessageType.Close, result.MessageType);
                     Assert.Equal(WebSocketCloseStatus.NormalClosure, result.CloseStatus);
                     logger.LogInformation("Closed socket");
@@ -164,7 +164,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [WebSocketsSupportedCondition]
         public async Task HttpRequestsNotSentWhenWebSocketsTransportRequestedAndSkipNegotiationSet()
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
                 var url = server.Url + "/echo";
@@ -188,9 +188,9 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     var message = new byte[] { 42 };
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
 
-                    await connection.Transport.Output.WriteAsync(message).OrTimeout();
+                    await connection.Transport.Output.WriteAsync(message).DefaultTimeout();
 
                     var receivedData = await connection.Transport.Input.ReadAsync(1);
                     Assert.Equal(message, receivedData);
@@ -203,7 +203,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -214,7 +214,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [InlineData(HttpTransportType.ServerSentEvents)]
         public async Task HttpConnectionThrowsIfSkipNegotiationSetAndTransportIsNotWebSockets(HttpTransportType transportType)
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
                 var url = server.Url + "/echo";
@@ -237,7 +237,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                 try
                 {
-                    var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => connection.StartAsync().OrTimeout());
+                    var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => connection.StartAsync().DefaultTimeout());
                     Assert.Equal("Negotiation can only be skipped when using the WebSocket transport directly.", exception.Message);
                 }
                 catch (Exception ex)
@@ -247,7 +247,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 }
                 finally
                 {
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                 }
             }
         }
@@ -257,7 +257,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         [LogLevel(LogLevel.Trace)]
         public async Task ConnectionCanSendAndReceiveMessages(HttpTransportType transportType, TransferFormat requestedTransferFormat)
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -268,7 +268,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     logger.LogInformation("Started connection to {url}", url);
 
                     var bytes = Encoding.UTF8.GetBytes(message);
@@ -276,7 +276,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                     logger.LogInformation("Sending {length} byte message", bytes.Length);
                     try
                     {
-                        await connection.Transport.Output.WriteAsync(bytes).OrTimeout();
+                        await connection.Transport.Output.WriteAsync(bytes).DefaultTimeout();
                     }
                     catch (OperationCanceledException)
                     {
@@ -290,7 +290,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                     logger.LogInformation("Sent message");
 
                     logger.LogInformation("Receiving message");
-                    Assert.Equal(message, Encoding.UTF8.GetString(await connection.Transport.Input.ReadAsync(bytes.Length).OrTimeout()));
+                    Assert.Equal(message, Encoding.UTF8.GetString(await connection.Transport.Input.ReadAsync(bytes.Length).DefaultTimeout()));
                     logger.LogInformation("Completed receive");
                 }
                 catch (Exception ex)
@@ -301,7 +301,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -315,7 +315,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
         public async Task ConnectionCanSendAndReceiveDifferentMessageSizesWebSocketsTransport(int length)
         {
             var message = new string('A', length);
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -325,19 +325,34 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     logger.LogInformation("Started connection to {url}", url);
 
                     var bytes = Encoding.UTF8.GetBytes(message);
-                    logger.LogInformation("Sending {length} byte message", bytes.Length);
-                    await connection.Transport.Output.WriteAsync(bytes).OrTimeout();
-                    logger.LogInformation("Sent message");
 
-                    logger.LogInformation("Receiving message");
-                    // Big timeout here because it can take a while to receive all the bytes
-                    var receivedData = await connection.Transport.Input.ReadAsync(bytes.Length).OrTimeout(TimeSpan.FromMinutes(2));
-                    Assert.Equal(message, Encoding.UTF8.GetString(receivedData));
-                    logger.LogInformation("Completed receive");
+                    async Task SendMessage()
+                    {
+                        logger.LogInformation("Sending {length} byte message", bytes.Length);
+                        await connection.Transport.Output.WriteAsync(bytes).DefaultTimeout();
+                        logger.LogInformation("Sent message");
+                    }
+
+                    async Task ReceiveMessage()
+                    {
+                        logger.LogInformation("Receiving message");
+                        // Big timeout here because it can take a while to receive all the bytes
+                        var receivedData = await connection.Transport.Input.ReadAsync(bytes.Length).DefaultTimeout(TimeSpan.FromMinutes(2));
+                        Assert.Equal(message, Encoding.UTF8.GetString(receivedData));
+                        logger.LogInformation("Completed receive");
+                    }
+
+                    // Send the receive concurrently so that back pressure is released
+                    // for server -> client sends
+                    var sendingTask = SendMessage();
+                    var receivingTask = ReceiveMessage();
+
+                    await sendingTask;
+                    await receivingTask;
                 }
                 catch (Exception ex)
                 {
@@ -347,7 +362,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -364,14 +379,14 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorWithNegotiation";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
                 var url = server.Url + "/auth";
                 var connection = new HttpConnection(new Uri(url), HttpTransportType.WebSockets, LoggerFactory);
 
-                var exception = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync().OrTimeout());
+                var exception = await Assert.ThrowsAsync<HttpRequestException>(() => connection.StartAsync().DefaultTimeout());
 
                 Assert.Contains("401", exception.Message);
             }
@@ -388,7 +403,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorStartingTransport";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -402,7 +417,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                 var connection = new HttpConnection(options, LoggerFactory);
 
-                await Assert.ThrowsAsync<WebSocketException>(() => connection.StartAsync().OrTimeout());
+                await Assert.ThrowsAsync<WebSocketException>(() => connection.StartAsync().DefaultTimeout());
             }
         }
 
@@ -418,7 +433,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorWithNegotiation";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -428,7 +443,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     Assert.True(false);
                 }
                 catch (Exception ex)
@@ -438,7 +453,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -454,7 +469,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorWithNegotiation";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -481,13 +496,13 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     logger.LogInformation("Connected to {url}", url);
                 }
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -524,7 +539,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
         private async Task ServerClosesConnectionWithErrorIfHubCannotBeCreated(HttpTransportType transportType)
         {
-            using (var server = await StartServer<Startup>())
+            await using (var server = await StartServer<Startup>())
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -535,7 +550,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                         .Build();
                 try
                 {
-                    var closeTcs = new TaskCompletionSource<object>();
+                    var closeTcs = new TaskCompletionSource();
                     connection.Closed += e =>
                     {
                         if (e != null)
@@ -544,7 +559,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                         }
                         else
                         {
-                            closeTcs.SetResult(null);
+                            closeTcs.SetResult();
                         }
                         return Task.CompletedTask;
                     };
@@ -553,7 +568,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
 
                     try
                     {
-                        await connection.StartAsync().OrTimeout();
+                        await connection.StartAsync().DefaultTimeout();
                     }
                     catch (OperationCanceledException)
                     {
@@ -563,7 +578,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                         // The closed event will still fire with the exception we care about.
                     }
 
-                    await closeTcs.Task.OrTimeout();
+                    await closeTcs.Task.DefaultTimeout();
                 }
                 catch (Exception ex)
                 {
@@ -573,7 +588,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -589,7 +604,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorWithNegotiation";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -602,7 +617,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     Assert.True(false);
                 }
                 catch (Exception ex)
@@ -612,7 +627,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }
@@ -628,7 +643,7 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                        writeContext.EventId.Name == "ErrorWithNegotiation";
             }
 
-            using (var server = await StartServer<Startup>(ExpectedErrors))
+            await using (var server = await StartServer<Startup>(ExpectedErrors))
             {
                 var logger = LoggerFactory.CreateLogger<EndToEndTests>();
 
@@ -653,13 +668,13 @@ namespace Microsoft.AspNetCore.SignalR.Tests
                 try
                 {
                     logger.LogInformation("Starting connection to {url}", url);
-                    await connection.StartAsync().OrTimeout();
+                    await connection.StartAsync().DefaultTimeout();
                     logger.LogInformation("Connected to {url}", url);
                 }
                 finally
                 {
                     logger.LogInformation("Disposing Connection");
-                    await connection.DisposeAsync().OrTimeout();
+                    await connection.DisposeAsync().DefaultTimeout();
                     logger.LogInformation("Disposed Connection");
                 }
             }

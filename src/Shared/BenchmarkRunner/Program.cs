@@ -9,7 +9,10 @@ using System.Reflection;
 using System.Text;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Configs;
+using BenchmarkDotNet.Jobs;
 using BenchmarkDotNet.Running;
+using BenchmarkDotNet.Toolchains.CsProj;
+using BenchmarkDotNet.Toolchains.DotNetCli;
 
 namespace Microsoft.AspNetCore.BenchmarkDotNet.Runner
 {
@@ -25,7 +28,7 @@ namespace Microsoft.AspNetCore.BenchmarkDotNet.Runner
             BeforeMain(args);
 
             AssignConfiguration(ref args);
-            var summaries = BenchmarkSwitcher.FromAssembly(typeof(Program).GetTypeInfo().Assembly)
+            var summaries = BenchmarkSwitcher.FromAssembly(typeof(Program).Assembly)
                 .Run(args, ManualConfig.CreateEmpty());
 
             foreach (var summary in summaries)
@@ -76,7 +79,7 @@ namespace Microsoft.AspNetCore.BenchmarkDotNet.Runner
                 args = argsList.ToArray();
                 return;
             }
-            
+
             var index = argsList.IndexOf("--config");
             if (index >= 0 && index < argsList.Count -1)
             {
