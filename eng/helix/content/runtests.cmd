@@ -14,7 +14,7 @@ REM Batch only supports up to 9 arguments using the %# syntax, need to shift to 
 
 set DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 set DOTNET_MULTILEVEL_LOOKUP=0
-set InstallPlaywright=%installPlaywright%
+set InstallPlaywright=%$installPlaywright%
 set PLAYWRIGHT_BROWSERS_PATH=%CD%\ms-playwright
 set PLAYWRIGHT_DRIVER_PATH=%CD%\.playwright\win-x64\native\playwright.cmd
 
@@ -27,15 +27,15 @@ set exit_code=0
 echo "Restore: dotnet restore RunTests\RunTests.csproj --ignore-failed-sources"
 dotnet restore RunTests\RunTests.csproj --ignore-failed-sources
 
-if errorlevel neq 0 (
+if not errorlevel 0 (
     set exit_code=%errorlevel%
-    echo "Finished running tests: exit_code=%exit_code%"
+    echo "Restore runtests failed: exit_code=%exit_code%"
     EXIT /b %exit_code%
 )
 
 echo "Running tests: dotnet run --no-restore --project RunTests\RunTests.csproj -- --target %$target% --runtime %$aspRuntimeVersion% --queue %$queue% --arch %$arch% --quarantined %$quarantined% --ef %$ef% --helixTimeout %$helixTimeout%"
 dotnet run --no-restore --project RunTests\RunTests.csproj -- --target %$target% --runtime %$aspRuntimeVersion% --queue %$queue% --arch %$arch% --quarantined %$quarantined% --ef %$ef% --helixTimeout %$helixTimeout%
-if errorlevel neq 0 (
+if not errorlevel 0 (
     set exit_code=%errorlevel%
 )
 echo "Finished running tests: exit_code=%exit_code%"
